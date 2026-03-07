@@ -1,0 +1,23 @@
+# Web server
+flask
+flask-cors
+python-dotenv
+requests
+
+# LangChain ecosystem
+langchain
+langchain-groq
+langchain-community
+langchain-core
+langchain-text-splitters
+
+# Vector store & embeddings
+faiss-cpu
+sentence-transformers
+
+# NLP utilities
+spacy
+langdetect
+groq
+tiktoken
+pydantic

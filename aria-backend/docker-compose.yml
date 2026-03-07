@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  flask:
+    build: .
+    container_name: aria-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+      - FLASK_PORT=5000
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    depends_on:
+      - rasa
+    command: python app.py
+
+  rasa:
+    image: rasa/rasa:3.6.0
+    container_name: aria-rasa
+    ports:
+      - "5005:5005"
+    environment:
+      - RASA_PORT=5005
+    entrypoint: /bin/sh
+    command: -c "rasa init --no-prompt && rasa train --quiet && rasa run --enable-api --cors '*' --port 5005"
+    working_dir: /app

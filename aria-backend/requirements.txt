@@ -6,7 +6,7 @@ requests
 
 # LangChain ecosystem
 langchain
-langchain-groq
+langchain-google-genai
 langchain-community
 langchain-core
 langchain-text-splitters
@@ -18,6 +18,6 @@ sentence-transformers
 # NLP utilities
 spacy
 langdetect
-groq
+google-generativeai
 tiktoken
 pydantic

@@ -14,8 +14,8 @@ class Config:
     class-level variables for easy access throughout the application.
     """
     
-    # Groq Configuration (Free AI API)
-    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    # Google Gemini Configuration (Free API)
+    GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
     
     # Rasa NLU Configuration
     RASA_URL: str = os.getenv("RASA_URL", "http://localhost:5005")
@@ -46,11 +46,11 @@ class Config:
         This method should be called during application startup to ensure
         all required environment variables are properly configured.
         """
-        if not cls.GROQ_API_KEY:
+        if not cls.GOOGLE_API_KEY:
             raise ValueError(
-                "GROQ_API_KEY is not configured. "
+                "GOOGLE_API_KEY is not configured. "
                 "Please set it in your .env file or environment variables. "
-                "Get a free API key from: https://console.groq.com/keys"
+                "Get a free API key from: https://aistudio.google.com/app/apikey"
             )
     
     @classmethod
@@ -67,7 +67,7 @@ class Config:
         print("=" * 60)
         
         config_items = [
-            ("GROQ_API_KEY", cls._mask_key(cls.GROQ_API_KEY)),
+            ("GOOGLE_API_KEY", cls._mask_key(cls.GOOGLE_API_KEY)),
             ("RASA_URL", cls.RASA_URL),
             ("RASA_TOKEN", cls._mask_key(cls.RASA_TOKEN) if cls.RASA_TOKEN else "(not set)"),
             ("FLASK_SECRET_KEY", cls._mask_key(cls.FLASK_SECRET_KEY)),

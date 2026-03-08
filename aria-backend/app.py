@@ -251,6 +251,17 @@ def chat():
             "tokens": int
         }
     """
+    # Phrases that indicate Rasa is giving a generic fallback response
+    FALLBACK_PHRASES = [
+        "could you provide",
+        "more detail",
+        "I appreciate your question",
+        "a bit more context",
+        "could you clarify",
+        "can you tell me more",
+        "more information"
+    ]
+    
     try:
         logger.info("POST /chat")
         
@@ -289,13 +300,31 @@ def chat():
         confidence = rasa_result["confidence"]
         source = "rasa"
         
-        # Use LangChain fallback if Rasa confidence is too low
-        if confidence < Config.CONFIDENCE_THRESHOLD:
-            logger.info(f"Rasa confidence {confidence:.3f} below threshold {Config.CONFIDENCE_THRESHOLD}, using LangChain fallback")
+        # Check if Rasa returned a generic fallback response
+        rasa_reply_lower = (reply or "").lower()
+        has_fallback_phrase = any(phrase in rasa_reply_lower for phrase in FALLBACK_PHRASES)
+        
+        # Use LangChain if:
+        # 1. Rasa confidence is below threshold, OR
+        # 2. Rasa returned a generic fallback phrase, OR
+        # 3. Rasa failed completely
+        should_use_langchain = (
+            confidence < Config.CONFIDENCE_THRESHOLD
+            or has_fallback_phrase
+            or rasa_result['source'] == 'rasa_failed'
+        )
+        
+        if should_use_langchain:
+            if has_fallback_phrase:
+                logger.info(f"Rasa returned generic fallback phrase, forcing LangChain: '{reply}'")
+            else:
+                logger.info(f"Using LangChain (confidence={confidence:.3f}, threshold={Config.CONFIDENCE_THRESHOLD})")
+            
             langchain_result = langchain_module.get_response(processed_message, session_id)
             reply = langchain_result["answer"]
             source = langchain_result["source"]
             tokens += langchain_result["tokens_used"]
+            logger.info(f"LangChain response: {reply[:100]}...")
         
         # Boost confidence based on keyword matching
         confidence = nlp_utils.boost_confidence(message, intent, confidence)

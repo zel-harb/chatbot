@@ -16,6 +16,3 @@ EXPOSE 3000
 
 # Run dev server with host binding
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
-
-# Run dev server
-CMD ["npm", "run", "dev"]

@@ -181,42 +181,27 @@ class LangChainModule:
     
     def get_memory(self, session_id: str) -> Any:
         """
-        Get or create conversation memory for a session.
+        Get conversation history for a session.
         
-        Memory is stored per session_id to maintain separate conversation
-        contexts for different users. Uses ConversationBufferMemory with
-        'chat_history' as the key and human_prefix/ai_prefix for clarity.
+        Note: Session memory is managed by the Flask backend via session_manager.
+        This method is kept for compatibility but retrieves history from outside.
         
         Args:
             session_id: Unique identifier for the conversation session.
         
         Returns:
-            ConversationBufferMemory instance for the session.
+            Empty dict placeholder (actual history comes from session_manager).
         """
-        if session_id not in self.memories:
-            try:
-                from langchain.memory import ConversationBufferMemory
-                
-                memory = ConversationBufferMemory(
-                    memory_key="chat_history",
-                    return_messages=True,
-                    human_prefix="User",
-                    ai_prefix="Assistant"
-                )
-                self.memories[session_id] = memory
-                logger.info(f"Created new memory for session: {session_id}")
-            except Exception as e:
-                logger.error(f"Failed to create memory: {e}")
-                raise
-        
-        return self.memories[session_id]
+        # Memory is managed external via session_manager in app.py
+        # This method is a placeholder for compatibility
+        return {}
     
     def get_response(self, question: str, session_id: str) -> Dict[str, Any]:
         """
-        Get AI response for a question using RAG or LLM.
+        Get AI response for a question using ChatPromptTemplate with proper prompt architecture.
         
-        Uses system prompt that defines ARIA as technical support specialist.
-        If vectorstore is available, adds document context for RAG.
+        Uses a properly separated system prompt (ChatPromptTemplate) to prevent
+        prompt injection and leakage.
         
         Args:
             question: The user's question/input text.
@@ -227,109 +212,89 @@ class LangChainModule:
             {
                 'answer': str - The AI's response,
                 'tokens_used': int - Estimated tokens used,
-                'source': str - 'rag' or 'llm' or 'text'
+                'source': str - 'rag', 'llm', or 'error'
             }
-        
-        Returns error response on failure (with source='error').
         """
         try:
+            from langchain_core.prompts import ChatPromptTemplate
             from nlp_utils import estimate_tokens
             
             tokens_used = estimate_tokens(question)
             
-            # System prompt for ARIA
-            system_prompt = """You are ARIA, an intelligent technical support assistant and student tutor. 
+            # System prompt - defines ARIA's role and behavior
+            SYSTEM_PROMPT = """You are ARIA, an intelligent technical support assistant specializing in Python, Flask, Rasa, LangChain, NLP, and general programming.
 
-Your expertise includes:
-- Python programming (basics to advanced)
-- Flask web framework
-- Rasa NLU and conversational AI
-- LangChain and RAG systems
-- NLP and machine learning concepts
-- General programming and software engineering
-
-Your response style:
-- Give clear, direct, complete answers
-- Provide examples and code snippets when relevant
-- Break down complex topics into simple steps
-- Never ask for more context unless absolutely necessary
-- If someone asks to learn something, provide structured learning guides
-- Be friendly but professional
-- Admit if you don't know something, but try to give helpful guidance anyway
-
-For technical questions, always provide working examples when possible."""
+RESPONSE GUIDELINES:
+- Provide complete, direct answers without generic filler
+- Use numbered steps (1. 2. 3.) for guides and procedures  
+- Use bullet points (- or •) for lists and options
+- Format code in ```language blocks (e.g., ```python)
+- Keep responses concise but comprehensive
+- Ask at most ONE follow-up question at the end, or none if the answer is complete
+- Never use phrases like "I appreciate your question" or "could you provide more detail?"
+- Answer any topic with your best knowledge, not just the listed specialties"""
+            
+            # Build ChatPromptTemplate with proper separation of system and user messages
+            chat_prompt = ChatPromptTemplate.from_messages([
+                ("system", SYSTEM_PROMPT),
+                ("human", "{question}")
+            ])
             
             # Use RAG if vectorstore is available
             if self.vectorstore:
                 logger.info(f"Using RAG retrieval for session: {session_id}")
                 
-                # Retrieve relevant documents
-                retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
-                docs = retriever.invoke(question)
-                
-                # Build context from retrieved documents
-                context = "\n\n".join([doc.page_content for doc in docs]) if docs else ""
-                
-                if context:
-                    # Create RAG prompt with context
-                    rag_prompt = f"""{system_prompt}
-
-Context from documents:
-{context}
-
-User question: {question}
-
-Provide a comprehensive answer based on the context and your knowledge:"""
-                else:
-                    # No documents retrieved, use regular prompt
-                    rag_prompt = f"""{system_prompt}
-
-User question: {question}
-
-Provide a comprehensive answer:"""
-                
-                answer = self._call_llm(rag_prompt)
-                tokens_used += estimate_tokens(answer)
-                
-                return {
-                    "answer": answer,
-                    "tokens_used": tokens_used,
-                    "source": "rag"
-                }
-            
-            # Fallback to simple LLM (no RAG)
+                try:
+                    # Retrieve relevant documents
+                    retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
+                    docs = retriever.invoke(question)
+                    
+                    # Build context from retrieved documents
+                    context = "\n\n".join([doc.page_content for doc in docs]) if docs else ""
+                    
+                    if context:
+                        # Add document context to the system prompt
+                        rag_system = SYSTEM_PROMPT + f"\n\nRELEVANT DOCUMENTATION:\n{context}"
+                        chat_prompt = ChatPromptTemplate.from_messages([
+                            ("system", rag_system),
+                            ("human", "{question}")
+                        ])
+                        source = "rag"
+                    else:
+                        source = "llm"
+                except Exception as rag_error:
+                    logger.warning(f"RAG retrieval failed, falling back to LLM: {rag_error}")
+                    source = "llm"
             else:
-                logger.info(f"Using LLM fallback for session: {session_id}")
-                
-                llm_prompt = f"""{system_prompt}
-
-User question: {question}
-
-Provide a comprehensive, helpful answer:"""
-                
-                answer = self._call_llm(llm_prompt)
-                tokens_used += estimate_tokens(answer)
-                
-                return {
-                    "answer": answer,
-                    "tokens_used": tokens_used,
-                    "source": "llm"
-                }
+                source = "llm"
+            
+            # Format the prompt
+            formatted_prompt = chat_prompt.format(question=question)
+            
+            # Call LLM with the properly formatted prompt
+            answer = self._call_llm(formatted_prompt)
+            
+            tokens_used += estimate_tokens(answer)
+            
+            return {
+                "answer": answer,
+                "tokens_used": tokens_used,
+                "source": source
+            }
         
         except Exception as e:
             logger.error(f"Error getting response: {e}")
             return {
-                "answer": f"I encountered an error processing your question: {str(e)}. Please try again.",
+                "answer": "I encountered an error processing your question. Please try again.",
                 "tokens_used": 0,
                 "source": "error"
             }
     
     def _call_llm(self, prompt: str) -> str:
         """
-        Call the LLM with fallback handling.
+        Call the LLM with simple error handling.
         
-        Tries to use Google Generative AI if available. 
-        Falls back to basic text templates as last resort.
+        Tries to use Google Generative AI if available.
         
         Args:
             prompt: The prompt to send to the LLM
@@ -342,181 +307,12 @@ Provide a comprehensive, helpful answer:"""
                 response = self.llm.generate_content(prompt)
                 return response.text if hasattr(response, 'text') else str(response)
             else:
-                # Fallback: Use pattern-based responses
-                logger.info("Using text generation fallback (Gemini API unavailable)")
-                return self._generate_fallback_response(prompt)
+                # No LLM available
+                logger.warning("LLM not available - returning error message")
+                return "I'm unable to process your request at this moment. Please try again later."
                 
         except Exception as e:
             logger.error(f"Error in _call_llm: {e}")
-            return self._generate_fallback_response(prompt)
-    
-    def _generate_fallback_response(self, prompt: str) -> str:
-        """
-        Generate intelligent fallback responses without requiring external APIs.
-        Uses pattern matching and NLP to provide helpful answers.
-        """
-        prompt_lower = prompt.lower()
-        
-        # Extract question if present
-        if "question:" in prompt_lower:
-            parts = prompt.split("Question:") if "Question:" in prompt else prompt.split("question:")
-            question = parts[-1].split("Answer:")[0].strip() if len(parts) > 1 else prompt.strip()
-        else:
-            question = prompt.strip()
-        
-        question_lower = question.lower()
-        
-        # Greeting patterns
-        greetings = ['hello', 'hi', 'hey', 'greetings', 'sup', 'good morning', 'good afternoon', 'good evening']
-        if any(word in question_lower for word in greetings):
-            return "Hello! I'm ARIA, your AI assistant for technical support and learning. What can I help you with today?"
-        
-        # How are you patterns
-        if any(phrase in question_lower for phrase in ['how are you', "how do you do", "what's up", 'whats up']):
-            return "I'm doing great, thanks for asking! I'm ready to help with technical questions about Python, Flask, Rasa, LangChain, or general programming. What would you like to know?"
-        
-        # Thank you patterns
-        if any(word in question_lower for word in ['thank you', 'thanks', 'thankyou', 'appreciate']):
-            return "You're welcome! I'm happy to help. Do you have any other questions?"
-        
-        # Goodbye patterns
-        if any(word in question_lower for word in ['bye', 'goodbye', 'see you', 'take care', 'farewell']):
-            return "Goodbye! Feel free to reach out anytime you need help. Have a great day!"
-        
-        # Python-related questions
-        if any(word in question_lower for word in ['python', 'py', 'code', 'programming', 'script']):
-            if any(word in question_lower for word in ['learn', 'start', 'beginner', 'basic']):
-                return """To start learning Python, follow these steps:
-1. **Install Python** from python.org (3.9+ recommended)
-2. **Text editor/IDE**: Use VS Code, PyCharm, or Jupyter Notebook
-3. **Basic concepts**: Start with variables, data types, loops, functions
-4. **Projects**: Build simple programs like calculators, to-do lists, games
-5. **Practice**: Solve problems on platforms like LeetCode or HackerRank
+            return f"I encountered an error: {str(e)[:100]}. Please try again."
 
-Key resources: Python.org tutorials, Codecademy, Real Python
-
-What specific aspect would you like to learn first?"""
-            
-            if any(word in question_lower for word in ['list', 'dictionary', 'string', 'tuple']):
-                return """Python Data Structures:
-- **List**: Ordered, mutable collection. Use [ ] and append(), pop(), extend()
-- **Dictionary**: Key-value pairs. Use { } and access by key
-- **Tuple**: Ordered, immutable. Use ( ) - can't modify after creation
-- **Set**: Unordered unique items. Use { } with unique values
-
-Which data structure are you working with?"""
-            
-            if any(word in question_lower for word in ['function', 'def', 'return', 'parameter']):
-                return """Python Functions:
-```python
-def function_name(parameter):
-    # Code here
-    return result
-```
-- Functions help organize code
-- Parameters are inputs, return is output
-- Use return keyword to send data back
-
-Need help with a specific function?"""
-            
-            return "I can help with Python! What specific topic are you interested in? (loops, functions, data types, libraries, etc.)"
-        
-        # Flask-related questions
-        if 'flask' in question_lower:
-            if any(word in question_lower for word in ['start', 'setup', 'install', 'begin']):
-                return """Flask Setup:
-1. Install Flask: `pip install flask`
-2. Create app.py:
-```python
-from flask import Flask
-app = Flask(__name__)
-
-@app.route('/')
-def hello():
-    return 'Hello World!'
-
-if __name__ == '__main__':
-    app.run()
-```
-3. Run: `python app.py`
-4. Visit: http://localhost:5000
-
-Ready to build your first Flask app?"""
-            
-            return "Flask is a Python web framework. What would you like to know? (routing, templates, databases, etc.)"
-        
-        # Rasa-related questions
-        if 'rasa' in question_lower:
-            if any(word in question_lower for word in ['start', 'setup', 'install']):
-                return """Rasa Setup:
-1. Install: `pip install rasa`
-2. Create project: `rasa init`
-3. Structure:
-   - nlu.yml: Training data for intent/entity recognition
-   - domain.yml: Intents, actions, responses
-   - stories.yml: Conversation flows
-   - rules.yml: Conditional flows
-4. Train: `rasa train`
-5. Chat: `rasa shell`
-
-What aspect of Rasa do you want to learn?"""
-            
-            return "Rasa is for NLU and conversational AI. What would you like to know about it?"
-        
-        # Error handling
-        if any(word in question_lower for word in ['error', 'bug', 'problem', 'broken', 'issue', 'not working', 'traceback']):
-            return "I can help debug issues! Please share:\n1. The error message/traceback\n2. What you were trying to do\n3. The relevant code snippet\n\nThen I can help you fix it."
-        
-        # General how questions
-        if question_lower.startswith('how '):
-            topic = question.replace('How ', '').replace('how ', '')
-            if len(topic) > 50:
-                topic = ' '.join(topic.split()[:3])
-            return f"""I can explain how to work with {topic}. 
-
-Here's my general approach:
-1. **Understand the basics** - Know what the concept does
-2. **See an example** - Look at working code
-3. **Try it yourself** - Practice with a simple implementation
-4. **Debug & iterate** - Modify and improve
-
-What specific part of '{topic}' would you like to understand?"""
-        
-        # What questions (definitions/explanations)
-        if question_lower.startswith('what '):
-            topic = question.replace('What ', '').replace('what ', '').replace('is ', '').replace('are ', '').strip()
-            if len(topic) > 40:
-                topic = ' '.join(topic.split()[:2])
-            return f"""{topic.title()} is a concept or tool that serves a specific purpose. 
-
-I can give you:
-1. **Definition** - What it is and does
-2. **When to use it** - Real-world applications
-3. **Code examples** - How to implement it
-4. **Best practices** - Tips for using it well
-
-Tell me which aspects you'd like to explore!"""
-        
-        # Why questions (reasoning)
-        if question_lower.startswith('why ') or any(word in question_lower for word in ['why ', 'reason', 'purpose']):
-            return """Great question! Understanding the 'why' is important for learning.
-
-The reason things work the way they do usually comes down to:
-- **Design decisions** - How the creator designed it
-- **Performance** - What makes it efficient
-- **Best practices** - What experience showed works well
-- **Compatibility** - How it works with other systems
-
-What specifically would you like to understand the reasoning behind?"""
-        
-        # Default intelligent response
-        return f"""I'm here to help! I understand you're asking about: "{question}"
-
-To give you the best answer, I can:
-1. Explain the concept step-by-step
-2. Show you code examples
-3. Help you troubleshoot issues
-4. Guide you through implementation
-
-What would be most helpful for you?"""
 

@@ -48,6 +48,63 @@ body {
   -webkit-box-orient: vertical;
 }
 
+/* Markdown rendering in message bubbles */
+.message-bubble h1,
+.message-bubble h2,
+.message-bubble h3 {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 10px 0 6px 0;
+  color: #1a1a2e;
+}
+
+.message-bubble p {
+  margin: 6px 0;
+  line-height: 1.6;
+}
+
+.message-bubble ul,
+.message-bubble ol {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+
+.message-bubble li {
+  margin: 4px 0;
+  line-height: 1.5;
+}
+
+.message-bubble code {
+  background: rgba(0,0,0,0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.message-bubble pre {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 14px;
+  border-radius: 10px;
+  overflow-x: auto;
+  margin: 10px 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.message-bubble pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.message-bubble strong {
+  font-weight: 700;
+  color: #2d2d5e;
+}
+
 /* Animations */
 @keyframes fadeIn {
   from {

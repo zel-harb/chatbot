@@ -252,6 +252,7 @@ def chat():
         }
     """
     # Phrases that indicate Rasa is giving a generic fallback response
+    # If Rasa response contains ANY of these phrases, force LangChain instead
     FALLBACK_PHRASES = [
         "could you provide",
         "more detail",
@@ -259,7 +260,16 @@ def chat():
         "a bit more context",
         "could you clarify",
         "can you tell me more",
-        "more information"
+        "more information",
+        "provide more context",
+        "help me understand",
+        "I understand you're asking",
+        "specific part",
+        "specific aspect",
+        "what would be helpful",
+        "best answer",
+        "Provide a comprehensive",
+        "That's great"
     ]
     
     try:
@@ -281,6 +291,20 @@ def chat():
         
         # Preprocess message
         processed_message = nlp_utils.preprocess_text(message)
+        
+        # Auto-context: If message is very short, use previous message for context
+        message_words = processed_message.split()
+        if len(message_words) < 3:
+            history = session_manager.get_history(session_id)
+            if len(history) >= 2:
+                # Get the last user message (should be at -2 if last is bot response)
+                for msg in reversed(history[:-1]):  # Skip the last message, look at previous
+                    if msg.get('role') == 'user':
+                        last_user_msg = msg.get('content', '')
+                        if last_user_msg:
+                            processed_message = f"{last_user_msg} - specifically about: {processed_message}"
+                            logger.info(f"Auto-context enabled. Enhanced message: '{processed_message[:80]}...'")
+                        break
         
         # Detect language
         language = nlp_utils.detect_language(message)

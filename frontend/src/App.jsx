@@ -104,8 +104,19 @@ function App() {
     setMessages(updatedMessages)
     setIsLoading(true)
 
+    // Create empty bot message that will be filled by streaming
+    const botMessageId = updatedMessages.length + 1
+    const botMessage = {
+      id: botMessageId,
+      text: '',
+      sender: 'bot',
+      timestamp: new Date().toISOString()
+    }
+    const messagesWithBotMessage = [...updatedMessages, botMessage]
+    setMessages(messagesWithBotMessage)
+
     try {
-      const response = await fetch('http://localhost:5000/chat', {
+      const response = await fetch('http://localhost:5000/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -117,26 +128,77 @@ function App() {
       if (!response.ok) {
         throw new Error(`Backend error: ${response.status}`)
       }
-      
-      const data = await response.json()
-      const botMessage = {
-        id: updatedMessages.length + 1,
-        text: data.reply || "Sorry, I couldn't process that request.",
-        sender: 'bot',
-        timestamp: new Date().toISOString()
+
+      // Handle SSE stream
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let botText = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value, { stream: true })
+        const lines = chunk.split('\n')
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6) // Remove 'data: ' prefix
+            
+            if (data === '[DONE]') {
+              // Stream completed
+              setIsLoading(false)
+              break
+            }
+
+            try {
+              const parsed = JSON.parse(data)
+              
+              if (parsed.error) {
+                botText = `Error: ${parsed.error}`
+              } else if (parsed.token) {
+                botText += parsed.token
+              }
+
+              // Update message in real-time
+              setMessages(prevMessages => {
+                const newMessages = [...prevMessages]
+                newMessages[newMessages.length - 1] = {
+                  ...newMessages[newMessages.length - 1],
+                  text: botText
+                }
+                return newMessages
+              })
+            } catch (e) {
+              // Skip parsing errors for empty lines
+              if (data.trim()) {
+                console.error('Error parsing SSE data:', e)
+              }
+            }
+          }
+        }
       }
-      const finalMessages = [...updatedMessages, botMessage]
-      setMessages(finalMessages)
-      saveConversation(finalMessages)
+
+      // Save conversation when streaming is done
+      setMessages(prevMessages => {
+        saveConversation(prevMessages)
+        return prevMessages
+      })
+
     } catch (error) {
-      console.error('API Error:', error)
+      console.error('Stream Error:', error)
       const errorMessage = {
-        id: updatedMessages.length + 1,
+        id: messagesWithBotMessage.length,
         text: `Error: ${error.message}. Make sure the backend is running at http://localhost:5000`,
         sender: 'bot',
         timestamp: new Date().toISOString()
       }
-      const finalMessages = [...updatedMessages, errorMessage]
+      
+      // Replace the empty bot message with error
+      const finalMessages = [
+        ...messagesWithBotMessage.slice(0, -1),
+        errorMessage
+      ]
       setMessages(finalMessages)
       saveConversation(finalMessages)
     } finally {

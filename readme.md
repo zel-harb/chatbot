@@ -1,6 +1,6 @@
 # 🤖 ARIA Chatbot - Intelligent Conversational AI
 
-A modern, production-ready chatbot platform built with **React**, **Flask**, **Rasa NLU**, **LangChain**, and **Groq** for ultra-fast AI responses.
+A modern, production-ready chatbot platform built with **React**, **Flask**, **Rasa NLU**, **LangChain**, and **Google Gemini** for intelligent conversational responses.
 
 ![Status](https://img.shields.io/badge/Status-MVP-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
@@ -33,9 +33,9 @@ A modern, production-ready chatbot platform built with **React**, **Flask**, **R
 ### 🧠 Advanced NLP Pipeline
 - **Rasa NLU** - Intent classification (local, no API)
 - **LangChain** - Retrieval-Augmented Generation (RAG)
-- **Groq API** - Ultra-fast LLM (free tier, 8+ tokens/sec)
+- **Google Gemini API** - Advanced LLM (free tier available)
 - **FAISS** - Vector similarity search
-- **Fallback logic** - Rasa → LangChain → Groq
+- **Fallback logic** - Rasa → LangChain → Gemini
 
 ### 📊 Session Management
 - Per-conversation storage with unique IDs
@@ -81,13 +81,13 @@ setup.bat           # Windows
 │   Port: 5000                        │
 └──────────────┬──────────────────────┘
                │
-        ┌──────┴──────┐
-        ▼             ▼
-    ┌────────┐   ┌──────────┐
-    │ Rasa   │   │LangChain│
-    │ NLU    │   │+ FAISS  │
-    │(Local) │   │+ Groq   │
-    └────────┘   └──────────┘
+        ┌──────┴──────────┐
+        ▼                 ▼
+    ┌────────┐   ┌──────────────┐
+    │ Rasa   │   │  LangChain   │
+    │ NLU    │   │  + FAISS     │
+    │(Local) │   │  + Gemini    │
+    └────────┘   └──────────────┘
 ```
 
 **Data Flow:**
@@ -96,7 +96,7 @@ setup.bat           # Windows
 3. Backend processes (Flask)
 4. Rasa classifies intent
 5. LangChain retrieves docs if needed
-6. Groq generates response
+6. Google Gemini generates response
 7. Response returned to frontend
 
 📚 [Full Architecture →](./ARCHITECTURE.md)
@@ -137,9 +137,9 @@ finalchat/
 | Layer | Technologies |
 |-------|--------------|
 | **Frontend** | React 18, Vite, Tailwind CSS, Axios |
-| **Backend** | Flask 2.3, Python 3.10, Rasa 3.6.0 |
+| **Backend** | Flask 2.3, Python 3.10, Rasa 3.x |
 | **NLP** | LangChain, FAISS, Sentence-Transformers, spaCy |
-| **LLM** | Groq API (llama-3.3-70b-versatile) |
+| **LLM** | Google Gemini API |
 | **Infrastructure** | Docker, Docker Compose |
 
 ---
@@ -149,18 +149,18 @@ finalchat/
 ### Prerequisites
 - Docker & Docker Compose
 - Node.js 18+ & npm
-- Groq API key (free at [console.groq.com/keys](https://console.groq.com/keys))
+- Google API key (free at [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey))
 
 ### Steps
 
-1. **Get Groq Key**: https://console.groq.com/keys (free signup)
+1. **Get Google API Key**: https://aistudio.google.com/app/apikey (free signup)
 2. **Clone & Setup**:
    ```bash
    git clone <repo-url>
    cd finalchat
    ./setup.sh
    ```
-3. **Add API Key**: Edit `aria-backend/.env` with your Groq key
+3. **Add API Key**: Edit `aria-backend/.env` with your Google API key
 4. **Open Browser**: http://localhost:3000
 
 📚 [Detailed Guide →](./QUICKSTART.md)
@@ -173,7 +173,8 @@ finalchat/
 |--------|----------|---------|
 | `GET` | `/health` | Health check |
 | `POST` | `/chat` | Send message (main endpoint) |
-| `POST` | `/langchain` | Direct LangChain call |
+| `POST` | `/chat/stream` | Stream response (real-time tokens) |
+| `POST` | `/langchain` | Direct LangChain RAG call |
 | `POST` | `/build-index` | Build document vectorstore |
 | `GET` | `/session/:id` | Get session stats |
 | `DELETE` | `/session/:id` | Delete session |
@@ -238,10 +239,10 @@ docker-compose logs flask
 - View browser console (F12) for errors
 - Verify Docker containers running
 
-### Groq API errors?
+### Google Gemini API errors?
 - Verify API key in `.env`
-- Get key from: https://console.groq.com/keys
-- Check rate limits
+- Get key from: https://aistudio.google.com/app/apikey
+- Check rate limits and quotas
 
 📚 [Full Troubleshooting →](./QUICKSTART.md#-troubleshooting)
 
@@ -252,7 +253,7 @@ docker-compose logs flask
 **Typical Response Times:**
 - Rasa only: 50-100ms
 - LangChain + FAISS: 200-500ms  
-- Full pipeline (Groq): 1-3 seconds
+- Full pipeline (with Gemini): 1-3 seconds
 
 **Resource Usage:**
 - Memory: ~500MB
@@ -302,12 +303,12 @@ MIT License - see LICENSE file for details
 
 - [Rasa Docs](https://rasa.com/docs/)
 - [LangChain Docs](https://python.langchain.com/)
-- [Groq API](https://console.groq.com/docs/)
+- [Google Gemini API](https://ai.google.dev/)
 - [FAISS Guide](https://github.com/facebookresearch/faiss)
 - [React Docs](https://react.dev/)
 
 ---
 
 **Status**: ✅ MVP Ready  
-**Last Updated**: March 7, 2026  
+**Last Updated**: March 9, 2026  
 **Version**: 1.0.0

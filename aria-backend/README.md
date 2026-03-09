@@ -1,14 +1,14 @@
 # ARIA Backend - Conversational AI Assistant
 
-A Flask-based conversational AI backend powered by Rasa NLU, LangChain, and OpenAI.
+A Flask-based conversational AI backend powered by Rasa NLU, LangChain, and Google Gemini.
 
 ## Features
 
 - **Rasa NLU Integration** - Intent classification and entity extraction
 - **LangChain RAG** - Document-based question answering with FAISS vector store
-- **OpenAI LLM** - GPT-3.5-turbo/GPT-4 powered responses
+- **Google Gemini LLM** - Advanced LLM powered responses
 - **Session Management** - In-memory conversation history per user
-- **Token Tracking** - API usage and cost estimation
+- **Token Tracking** - API usage tracking
 - **Language Detection** - Automatic language identification
 - **Docker Ready** - Complete Docker and Docker Compose setup
 
@@ -18,7 +18,7 @@ A Flask-based conversational AI backend powered by Rasa NLU, LangChain, and Open
 - pip (Python package manager)
 - Rasa 3.6.0 (for NLU training and inference)
 - Docker & Docker Compose (optional, for containerized setup)
-- OpenAI API Key (for LLM functionality)
+- Google API Key (for Gemini LLM functionality)
 
 ## Installation
 
@@ -52,7 +52,7 @@ python -m spacy download en_core_web_sm
 ```bash
 cp .env.example .env
 # Edit .env and set your values:
-# - OPENAI_API_KEY=your_key_here
+# - GOOGLE_API_KEY=your_key_here
 # - RASA_URL=http://localhost:5005
 # - FLASK_SECRET_KEY=your_secret_key
 ```
@@ -252,8 +252,8 @@ Response:
 All configuration is managed via environment variables in `.env`:
 
 ```bash
-# OpenAI Configuration
-OPENAI_API_KEY=sk-...
+# Google Gemini Configuration
+GOOGLE_API_KEY=your_key_here
 
 # Rasa Configuration
 RASA_URL=http://localhost:5005
@@ -265,7 +265,7 @@ FLASK_ENV=development
 FLASK_PORT=5000
 
 # Model Configuration
-LLM_MODEL=gpt-3.5-turbo
+LLM_MODEL=gemini-pro
 LLM_TEMPERATURE=0.3
 CONFIDENCE_THRESHOLD=0.60
 
@@ -366,11 +366,11 @@ The LangChain module will work without an index:
 - It will use LLM fallback without document retrieval
 - To enable RAG, place documents in `./data/docs/` and call `/build-index`
 
-### OpenAI API Errors
+### Google Gemini API Errors
 
-- Verify `OPENAI_API_KEY` is set correctly in `.env`
-- Check API key is valid and has sufficient credits
-- Verify network connectivity to OpenAI
+- Verify `GOOGLE_API_KEY` is set correctly in `.env`
+- Check API key is valid at https://aistudio.google.com/app/apikey
+- Verify network connectivity to Google Gemini API
 
 ### Memory Usage
 

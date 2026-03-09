@@ -22,7 +22,7 @@
 │         │              ├─────────────────┤                    │
 │         │              │ 1. Rasa NLU    │                    │
 │         │              │ 2. LangChain   │                    │
-│         │              │ 3. Groq LLM    │                    │
+│         │              │ 3. Gemini LLM  │                    │
 │         │              │ 4. FAISS RAG   │                    │
 │         │              └─────────────────┘                    │
 │         │                    ▲                               │
@@ -49,12 +49,12 @@
 
 ### **Backend API (Flask + Python)**
 - **Purpose**: Central business logic and NLP orchestration
-- **Tech Stack**: Flask, Python 3.10, Groq API, Rasa
+- **Tech Stack**: Flask, Python 3.10, Google Gemini API, Rasa
 - **Port**: 5000
 - **Key Responsibilities**:
   - HTTP REST API endpoints
   - Session management
-  - NLU routing (Rasa → LangChain → Groq)
+  - NLU routing (Rasa → LangChain → Gemini)
   - Token tracking
   - Error handling & logging
 
@@ -72,11 +72,11 @@
 - **Memory**: Conversation Buffer (in-memory)
 - **Features**: Document retrieval + context injection
 
-#### **Stage 3: Groq LLM (Fallback Generator)**
-- **Model**: llama-3.3-70b-versatile
-- **Provider**: Groq API (free, ultra-fast)
+#### **Stage 3: Google Gemini LLM (Fallback Generator)**
+- **Model**: Google Gemini (gemini-pro or gemini-1.5)
+- **Provider**: Google AI Studio (free tier available)
 - **Temperature**: 0.3 (deterministic responses)
-- **Backup Models**: llama-3.1-8b-instant, gemma-2-9b-it
+- **Features**: Advanced reasoning, fast responses
 
 ### **Session Manager**
 - **Storage**: In-memory Python dictionary (per container lifetime)
@@ -137,7 +137,7 @@
               │              ┌──────▼───────────────┐
               │              │ 1. Retrieve docs     │
               │              │ 2. Inject context    │
-              │              │ 3. Call Groq LLM     │
+              │              │ 3. Call Gemini LLM   │
               │              └──────┬───────────────┘
               │                     │
               └─────────┬───────────┘
@@ -182,11 +182,11 @@
 
 ## 🧠 Technology Decisions
 
-### **Why Groq over OpenAI?**
-- ✅ **Free tier** with no quota limits
-- ✅ **Ultra-fast inference** (8+ tokens/second)
-- ✅ **No billing** for testing/development
-- ❌ OpenAI requires paid API key
+### **Why Google Gemini?**
+- ✅ **Free tier** with generous quotas
+- ✅ **Advanced reasoning capabilities**
+- ✅ **No billing** for development/testing
+- ✅ **Strong performance** on multiple tasks
 
 ### **Why Rasa for NLU?**
 - ✅ **Specialized intent classification** without API calls
@@ -250,7 +250,7 @@ aria-backend/data/docs/
 ### **Configuration**
 ```
 .env file → Config class → All modules
-  └─→ GROQ_API_KEY, RASA_URL, LLM_MODEL, etc.
+  └─→ GOOGLE_API_KEY, RASA_URL, LLM_MODEL, etc.
 ```
 
 ---
@@ -281,14 +281,14 @@ aria-backend/data/docs/
 ### **Typical Response Times**
 - **Rasa only**: 50-100ms
 - **LangChain + FAISS**: 200-500ms
-- **Full pipeline (Groq LLM)**: 1-3 seconds
+- **Full pipeline (Gemini LLM)**: 1-3 seconds
 - **Network roundtrip**: 100-200ms
 
 ### **Scalability Bottlenecks**
 1. **In-memory sessions**: Limited by RAM (no persistence)
 2. **FAISS vectorstore**: Single instance (no distributed search)
 3. **Rasa model**: Single instance (no API load balancing)
-4. **Groq API**: Free tier rate limits (~10 req/min)
+4. **Google Gemini API**: Free tier rate limits and quotas
 
 ---
 

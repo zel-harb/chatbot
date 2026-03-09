@@ -41,7 +41,7 @@ class Config:
         Validate that all critical configuration variables are set.
         
         Raises:
-            ValueError: If OPENAI_API_KEY is not configured.
+            ValueError: If GOOGLE_API_KEY is not configured.
         
         This method should be called during application startup to ensure
         all required environment variables are properly configured.
@@ -59,7 +59,7 @@ class Config:
         Display all configuration values to console.
         
         Prints all configuration variables in a formatted table while masking
-        the OPENAI_API_KEY for security. Useful for debugging and verifying
+        the GOOGLE_API_KEY for security. Useful for debugging and verifying
         application configuration.
         """
         print("\n" + "=" * 60)

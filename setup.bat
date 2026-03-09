@@ -57,7 +57,8 @@ if "%choice%"=="1" (
     if not exist .env (
         echo [*] Creating .env file...
         copy .env.example .env
-        echo [!] Please edit aria-backend\.env and add your OPENAI_API_KEY
+        echo [!] Please edit aria-backend\.env and add your GOOGLE_API_KEY
+        echo [!] Get free key from: https://aistudio.google.com/app/apikey
         pause
     )
     
@@ -73,11 +74,10 @@ if "%choice%"=="1" (
     if not exist .env (
         echo [*] Creating .env file...
         copy .env.example .env
-        echo [!] Please edit aria-backend\.env and add your OPENAI_API_KEY
+        echo [!] Please edit aria-backend\.env and add your GOOGLE_API_KEY
+        echo [!] Get free key from: https://aistudio.google.com/app/apikey
         pause
     )
-    
-    if not exist venv (
         echo [*] Creating Python virtual environment...
         python -m venv venv
     )

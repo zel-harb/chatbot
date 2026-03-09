@@ -1,318 +1,427 @@
 import os
 import logging
-from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Any, List
 from config import Config
+from langchain_core.messages import HumanMessage, AIMessage
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 
+class SimpleMemory:
+    """Simple in-memory conversation storage."""
+    
+    def __init__(self, k: int = 20):
+        self.k = k
+        self.messages = []
+    
+    def load_memory_variables(self, inputs=None):
+        """Get current chat history."""
+        return {"chat_history": self.messages[-self.k:] if self.messages else []}
+    
+    def save_context(self, inputs: dict, outputs: dict):
+        """Save user input and AI response to memory."""
+        user_message = HumanMessage(content=inputs.get("input", ""))
+        ai_message = AIMessage(content=outputs.get("output", ""))
+        self.messages.append(user_message)
+        self.messages.append(ai_message)
+        logger.debug(f"Memory saved. Total messages: {len(self.messages)}")
+
+
 class LangChainModule:
     """
-    LangChain integration module for conversational AI with RAG.
+    LangChain integration with persistent conversation memory.
     
-    Handles initialization of language models, embeddings, vector stores,
-    and conversation memory. Supports both RAG-based responses (when docs
-    are available) and standalone LLM responses as fallback.
+    CRITICAL DESIGN:
+    - Created ONCE at app startup as a global singleton
+    - The self.memories dict persists for the app lifetime
+    - Each session_id gets one memory object that persists across requests
     """
     
     def __init__(self) -> None:
         """
-        Initialize the LangChain module with all necessary components.
+        Initialize the LangChain module with Google Generative AI.
         
-        Sets up:
-        - Claude API (Anthropic) as primary LLM fallback
-        - Google Generative AI (if API key works)
-        - HuggingFace embeddings model
-        - FAISS vectorstore (if available)
-        - Conversation memory storage
-        
-        Logs warnings if models or documents are not found.
+        CRITICAL: This __init__ is called ONCE at app startup.
+        The memories dictionary persists for the lifetime of the Flask app.
         """
         logger.info("Initializing LangChainModule...")
         
-        # Load configuration
-        self.config = Config
-        
-        # Try Google Generative AI first, with fallback to text generation
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.config.GOOGLE_API_KEY)
-            self.llm = genai.GenerativeModel(self.config.LLM_MODEL)
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            
+            # Initialize the LLM - will be reused for all sessions
+            self.llm = ChatGoogleGenerativeAI(
+                model=Config.LLM_MODEL,
+                google_api_key=Config.GOOGLE_API_KEY,
+                temperature=float(Config.LLM_TEMPERATURE),
+                convert_system_message_to_human=True  # Required for Gemini
+            )
             self.llm_type = "google"
-            logger.info(f"Google Generative AI initialized with model: {self.config.LLM_MODEL}")
+            logger.info(f"✓ Google Generative AI initialized: {Config.LLM_MODEL}")
+            
         except Exception as e:
-            logger.warning(f"Google Generative AI failed ({type(e).__name__}): {str(e)[:100]}")
-            logger.info("Falling back to text generation fallback mode")
+            logger.error(f"Failed to initialize Google Generative AI: {e}")
             self.llm = None
             self.llm_type = "text"
         
-        # Initialize HuggingFace Embeddings
-        try:
-            from langchain_community.embeddings import HuggingFaceEmbeddings
-            
-            self.embeddings = HuggingFaceEmbeddings(
-                model_name=self.config.EMBEDDINGS_MODEL
-            )
-            logger.info(f"HuggingFaceEmbeddings initialized with model: {self.config.EMBEDDINGS_MODEL}")
-        except Exception as e:
-            logger.error(f"Failed to initialize embeddings: {e}")
-            self.embeddings = None
+        # CRITICAL: Persistent memory storage
+        # Key: session_id, Value: SimpleMemory
+        # This dict lives for the entire app lifetime
+        self.memories: Dict[str, SimpleMemory] = {}
+        logger.info("✓ Memory storage initialized (empty)")
         
-        # Initialize vectorstore
+        # Initialize vectorstore for RAG
         self.vectorstore = None
         self._load_vectorstore()
         
-        # Initialize conversation memories (one per session)
-        self.memories: Dict[str, Any] = {}
-        
-        logger.info("LangChainModule initialization complete")
+        logger.info("✓ LangChainModule initialization complete\n")
     
     def _load_vectorstore(self) -> None:
-        """
-        Load FAISS vectorstore from disk if it exists.
-        
-        Attempts to load a pre-built FAISS index from ./data/faiss_index.
-        If not found, logs a warning indicating that the vectorstore will
-        be built on demand or no RAG functionality will be available.
-        """
+        """Load FAISS vectorstore for RAG if it exists."""
         try:
             from langchain_community.vectorstores import FAISS
             
             faiss_path = "/data/faiss_index"
-            if os.path.exists(faiss_path) and self.embeddings:
+            if os.path.exists(faiss_path):
+                from langchain_community.embeddings import HuggingFaceEmbeddings
+                embeddings = HuggingFaceEmbeddings(model_name=Config.EMBEDDINGS_MODEL)
                 self.vectorstore = FAISS.load_local(
                     faiss_path, 
-                    self.embeddings,
+                    embeddings,
                     allow_dangerous_deserialization=True
                 )
-                logger.info(f"FAISS vectorstore loaded from {faiss_path}")
-            else:
-                logger.warning(
-                    f"FAISS vectorstore not found at {faiss_path}. "
-                    "Run build_vectorstore() to create it."
-                )
+                logger.info(f"✓ FAISS vectorstore loaded from {faiss_path}")
         except Exception as e:
-            logger.warning(f"Could not load vectorstore: {e}")
+            logger.debug(f"Vectorstore not available: {e}")
             self.vectorstore = None
     
-    def build_vectorstore(self) -> None:
+    def get_memory(self, session_id: str) -> SimpleMemory:
         """
-        Build FAISS vectorstore from documents in DOCS_PATH.
+        Get or create conversation memory for a session.
         
-        Process:
-        1. Walk through DOCS_PATH and load all .txt and .pdf files
-        2. Split documents using RecursiveCharacterTextSplitter
-        3. Create FAISS vectorstore from split documents
-        4. Save vectorstore to ./data/faiss_index
-        5. Log statistics about indexed documents
-        
-        Raises:
-            FileNotFoundError: If DOCS_PATH doesn't exist
-            ImportError: If required libraries are not available
-        """
-        logger.info(f"Building vectorstore from documents in {self.config.DOCS_PATH}")
-        
-        if not self.embeddings:
-            logger.error("Cannot build vectorstore without embeddings")
-            return
-        
-        try:
-            from langchain_community.document_loaders import TextLoader, PyPDFLoader
-            from langchain_text_splitters import RecursiveCharacterTextSplitter
-            from langchain_community.vectorstores import FAISS
-            
-            # Check if docs path exists
-            docs_path = Path(self.config.DOCS_PATH)
-            if not docs_path.exists():
-                logger.warning(f"DOCS_PATH not found: {self.config.DOCS_PATH}")
-                return
-            
-            # Load documents
-            documents = []
-            
-            # Load .txt files
-            for txt_file in docs_path.glob("**/*.txt"):
-                try:
-                    loader = TextLoader(str(txt_file))
-                    documents.extend(loader.load())
-                    logger.info(f"Loaded text file: {txt_file}")
-                except Exception as e:
-                    logger.warning(f"Failed to load {txt_file}: {e}")
-            
-            # Load .pdf files
-            for pdf_file in docs_path.glob("**/*.pdf"):
-                try:
-                    loader = PyPDFLoader(str(pdf_file))
-                    documents.extend(loader.load())
-                    logger.info(f"Loaded PDF file: {pdf_file}")
-                except Exception as e:
-                    logger.warning(f"Failed to load {pdf_file}: {e}")
-            
-            if not documents:
-                logger.warning("No documents found to index")
-                return
-            
-            logger.info(f"Loaded {len(documents)} documents")
-            
-            # Split documents
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=500,
-                chunk_overlap=50
-            )
-            chunks = splitter.split_documents(documents)
-            logger.info(f"Split documents into {len(chunks)} chunks")
-            
-            # Create FAISS vectorstore
-            self.vectorstore = FAISS.from_documents(chunks, self.embeddings)
-            
-            # Save vectorstore
-            faiss_path = "./data/faiss_index"
-            os.makedirs(os.path.dirname(faiss_path), exist_ok=True)
-            self.vectorstore.save_local(faiss_path)
-            
-            logger.info(f"FAISS vectorstore built and saved to {faiss_path}")
-            logger.info(f"Total chunks indexed: {len(chunks)}")
-        
-        except Exception as e:
-            logger.error(f"Error building vectorstore: {e}")
-            raise
-    
-    def get_memory(self, session_id: str) -> Any:
-        """
-        Get conversation history for a session.
-        
-        Note: Session memory is managed by the Flask backend via session_manager.
-        This method is kept for compatibility but retrieves history from outside.
+        CRITICAL BEHAVIOR:
+        - Returns the SAME memory object for the same session_id across all requests
+        - Memory persists for the app lifetime
         
         Args:
-            session_id: Unique identifier for the conversation session.
-        
+            session_id: Unique identifier for the conversation
+            
         Returns:
-            Empty dict placeholder (actual history comes from session_manager).
+            SimpleMemory object (same instance for same session)
         """
-        # Memory is managed external via session_manager in app.py
-        # This method is a placeholder for compatibility
-        return {}
+        if session_id not in self.memories:
+            self.memories[session_id] = SimpleMemory(k=20)
+            logger.info(f"↳ Created memory for session: {session_id}")
+        
+        return self.memories[session_id]
     
     def get_response(self, question: str, session_id: str) -> Dict[str, Any]:
         """
-        Get AI response for a question using ChatPromptTemplate with proper prompt architecture.
+        Get AI response with FULL conversation memory integration.
         
-        Uses a properly separated system prompt (ChatPromptTemplate) to prevent
-        prompt injection and leakage.
+        This uses our simple memory system:
+        1. Load chat_history from memory for this session
+        2. Build the full prompt with history
+        3. Generate response using the LLM
+        4. Save response to memory
         
         Args:
-            question: The user's question/input text.
-            session_id: Unique identifier for the conversation session.
-        
+            question: The user's question
+            session_id: Session identifier (memory is per-session)
+            
         Returns:
-            Dict containing:
-            {
-                'answer': str - The AI's response,
-                'tokens_used': int - Estimated tokens used,
-                'source': str - 'rag', 'llm', or 'error'
-            }
+            Dict with 'answer', 'tokens_used', 'source'
         """
         try:
-            from langchain_core.prompts import ChatPromptTemplate
-            from nlp_utils import estimate_tokens
+            from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
             
-            tokens_used = estimate_tokens(question)
+            if not self.llm:
+                return {
+                    "answer": "LLM not available. Please check configuration.",
+                    "tokens_used": 0,
+                    "source": "error"
+                }
             
-            # System prompt - defines ARIA's role and behavior
-            SYSTEM_PROMPT = """You are ARIA, an intelligent technical support assistant specializing in Python, Flask, Rasa, LangChain, NLP, and general programming.
+            # CRITICAL: Get the persistent memory for this session
+            memory = self.get_memory(session_id)
+            
+            # Load current chat history from memory
+            chat_data = memory.load_memory_variables()
+            history_messages = chat_data.get("chat_history", [])
+            
+            # Build RAG context if available
+            rag_context = ""
+            if self.vectorstore:
+                try:
+                    retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
+                    docs = retriever.invoke(question)
+                    if docs:
+                        rag_context = "\n\n".join([doc.page_content for doc in docs])
+                except Exception as rag_err:
+                    logger.debug(f"RAG retrieval failed: {rag_err}")
+            
+            # Build system prompt that emphasizes memory
+            system_prompt = """You are ARIA, an intelligent technical support assistant specializing in Python, Flask, Rasa, LangChain, NLP, and general programming.
+
+CONVERSATION MEMORY - THIS IS CRITICAL:
+You have access to the complete conversation history above. Remember EVERYTHING:
+- User's name and personal information
+- Previous questions and your answers
+- Code they've shared
+- Preferences mentioned earlier
+
+When answering, use the conversation context. If they ask about something already discussed, reference it.
 
 RESPONSE GUIDELINES:
-- Provide complete, direct answers without generic filler
-- Use numbered steps (1. 2. 3.) for guides and procedures  
-- Use bullet points (- or •) for lists and options
-- Format code in ```language blocks (e.g., ```python)
-- Keep responses concise but comprehensive
-- Ask at most ONE follow-up question at the end, or none if the answer is complete
-- Never use phrases like "I appreciate your question" or "could you provide more detail?"
-- Answer any topic with your best knowledge, not just the listed specialties"""
+- Provide complete, direct, helpful answers
+- Use numbered steps (1. 2. 3.) for procedures
+- Use bullet points (- or •) for lists  
+- Format code in ```language code blocks
+- Keep responses concise but comprehensive"""
             
-            # Build ChatPromptTemplate with proper separation of system and user messages
-            chat_prompt = ChatPromptTemplate.from_messages([
-                ("system", SYSTEM_PROMPT),
+            if rag_context:
+                system_prompt += f"\n\nRELEVANT DOCUMENTATION:\n{rag_context}"
+            
+            # Create prompt with memory placeholder
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                MessagesPlaceholder(variable_name="chat_history"),
                 ("human", "{question}")
             ])
             
-            # Use RAG if vectorstore is available
-            if self.vectorstore:
-                logger.info(f"Using RAG retrieval for session: {session_id}")
-                
-                try:
-                    # Retrieve relevant documents
-                    retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
-                    docs = retriever.invoke(question)
-                    
-                    # Build context from retrieved documents
-                    context = "\n\n".join([doc.page_content for doc in docs]) if docs else ""
-                    
-                    if context:
-                        # Add document context to the system prompt
-                        rag_system = SYSTEM_PROMPT + f"\n\nRELEVANT DOCUMENTATION:\n{context}"
-                        chat_prompt = ChatPromptTemplate.from_messages([
-                            ("system", rag_system),
-                            ("human", "{question}")
-                        ])
-                        source = "rag"
-                    else:
-                        source = "llm"
-                except Exception as rag_error:
-                    logger.warning(f"RAG retrieval failed, falling back to LLM: {rag_error}")
-                    source = "llm"
-            else:
-                source = "llm"
+            # Create chain using LCEL (LangChain Expression Language)
+            chain = prompt | self.llm
             
-            # Format the prompt
-            formatted_prompt = chat_prompt.format(question=question)
+            # Invoke chain with history
+            result = chain.invoke({
+                "chat_history": history_messages,
+                "question": question
+            })
             
-            # Call LLM with the properly formatted prompt
-            answer = self._call_llm(formatted_prompt)
+            # Extract answer text
+            answer = result.content if hasattr(result, 'content') else str(result)
+            answer = answer.strip()
             
-            tokens_used += estimate_tokens(answer)
+            # CRITICAL: Save the exchange to memory
+            # This is what makes memory persistent across requests
+            memory.save_context(
+                {"input": question},
+                {"output": answer}
+            )
+            
+            logger.info(f"✓ Response generated & saved to memory for session {session_id}")
             
             return {
                 "answer": answer,
-                "tokens_used": tokens_used,
-                "source": source
+                "tokens_used": len(answer.split()) * 2,
+                "source": "llm"
             }
-        
+            
         except Exception as e:
-            logger.error(f"Error getting response: {e}")
+            logger.error(f"Error in get_response: {e}", exc_info=True)
             return {
-                "answer": "I encountered an error processing your question. Please try again.",
+                "answer": f"I encountered an error: {str(e)[:100]}. Please try again.",
                 "tokens_used": 0,
                 "source": "error"
             }
     
-    def _call_llm(self, prompt: str) -> str:
+    def stream_response(self, question: str, session_id: str):
         """
-        Call the LLM with simple error handling.
+        Stream AI response tokens while maintaining conversation memory.
         
-        Tries to use Google Generative AI if available.
+        Uses streaming LLM to yield tokens in real-time. Memory is maintained
+        through save_context calls after streaming ends.
         
         Args:
-            prompt: The prompt to send to the LLM
+            question: The user's question
+            session_id: Session identifier
             
-        Returns:
-            The LLM response as a string
+        Yields:
+            Token strings as they arrive from the LLM
         """
         try:
-            if self.llm and self.llm_type == "google":
-                response = self.llm.generate_content(prompt)
-                return response.text if hasattr(response, 'text') else str(response)
-            else:
-                # No LLM available
-                logger.warning("LLM not available - returning error message")
-                return "I'm unable to process your request at this moment. Please try again later."
-                
+            from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            
+            # Get the persistent memory for this session
+            memory = self.get_memory(session_id)
+            
+            # Load current chat history from memory
+            chat_data = memory.load_memory_variables()
+            history_messages = chat_data.get("chat_history", [])
+            
+            # Build RAG context if available
+            rag_context = ""
+            if self.vectorstore:
+                try:
+                    retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
+                    docs = retriever.invoke(question)
+                    if docs:
+                        rag_context = "\n\n".join([doc.page_content for doc in docs])
+                except Exception as rag_err:
+                    logger.debug(f"RAG retrieval failed in streaming: {rag_err}")
+            
+            # System prompt with memory emphasis
+            system_prompt = """You are ARIA, an intelligent technical support assistant specializing in Python, Flask, Rasa, LangChain, NLP, and general programming.
+
+CONVERSATION MEMORY - THIS IS CRITICAL:
+You have access to the complete conversation history above. Remember EVERYTHING:
+- User's name and personal information
+- Previous questions and your answers
+- Code they've shared
+- Preferences mentioned earlier
+
+When answering, use the conversation context.
+
+RESPONSE GUIDELINES:
+- Provide complete, direct, helpful answers
+- Use numbered steps (1. 2. 3.) for procedures
+- Use bullet points (- or •) for lists  
+- Format code in ```language code blocks"""
+            
+            if rag_context:
+                system_prompt += f"\n\nRELEVANT DOCUMENTATION:\n{rag_context}"
+            
+            # Create streaming LLM
+            streaming_llm = ChatGoogleGenerativeAI(
+                model=Config.LLM_MODEL,
+                google_api_key=Config.GOOGLE_API_KEY,
+                streaming=True,
+                temperature=float(Config.LLM_TEMPERATURE),
+                convert_system_message_to_human=True
+            )
+            
+            # Create prompt with history placeholder
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{question}")
+            ])
+            
+            # Create chain and stream
+            chain = prompt | streaming_llm
+            
+            # Stream response
+            full_response = ""
+            for chunk in chain.stream({
+                "chat_history": history_messages,
+                "question": question
+            }):
+                token = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                full_response += token
+                yield token
+            
+            # CRITICAL: Save the exchange to memory after streaming completes
+            memory.save_context(
+                {"input": question},
+                {"output": full_response}
+            )
+            
+            logger.info(f"✓ Stream completed for session {session_id}")
+            
         except Exception as e:
-            logger.error(f"Error in _call_llm: {e}")
-            return f"I encountered an error: {str(e)[:100]}. Please try again."
+            logger.error(f"Error in stream_response: {e}", exc_info=True)
+            error_msg = f"I encountered an error: {str(e)[:100]}. Please try again."
+            yield error_msg
+    
+    def stream_response(self, question: str, session_id: str):
+        """
+        Stream AI response tokens while maintaining conversation memory.
+        
+        Uses streaming LLM to yield tokens in real-time. Memory is still
+        maintained through manual save_context calls after streaming ends.
+        
+        Args:
+            question: The user's question
+            session_id: Session identifier
+            
+        Yields:
+            Token strings as they arrive from the LLM
+        """
+        try:
+            from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            
+            # Get the persistent memory for this session
+            memory = self.get_memory(session_id)
+            
+            # Load current chat history from memory
+            chat_history = memory.load_memory_variables({})
+            history_messages = chat_history.get("chat_history", [])
+            
+            # Build RAG context if available
+            rag_context = ""
+            if self.vectorstore:
+                try:
+                    retriever = self.vectorstore.as_retriever(search_kwargs={"k": 3})
+                    docs = retriever.invoke(question)
+                    if docs:
+                        rag_context = "\n\n".join([doc.page_content for doc in docs])
+                except Exception as rag_err:
+                    logger.debug(f"RAG retrieval failed in streaming: {rag_err}")
+            
+            # System prompt with memory emphasis
+            system_prompt = """You are ARIA, an intelligent technical support assistant specializing in Python, Flask, Rasa, LangChain, NLP, and general programming.
 
+CONVERSATION MEMORY - THIS IS CRITICAL:
+Below is the complete conversation history. You have access to EVERYTHING previously discussed.
+Remember EVERYTHING the user has told you, including:
+- Their name and personal information
+- Previous questions and your answers
+- Code they've shared
+- Preferences and context from earlier messages
 
+When answering, always refer back to the conversation history when relevant.
+
+RESPONSE GUIDELINES:
+- Provide complete, direct, helpful answers
+- Use numbered steps (1. 2. 3.) for procedures
+- Use bullet points (- or •) for lists  
+- Format code in ```language code blocks"""
+            
+            if rag_context:
+                system_prompt += f"\n\nRELEVANT DOCUMENTATION:\n{rag_context}"
+            
+            # Create streaming LLM
+            streaming_llm = ChatGoogleGenerativeAI(
+                model=Config.LLM_MODEL,
+                google_api_key=Config.GOOGLE_API_KEY,
+                streaming=True,
+                temperature=float(Config.LLM_TEMPERATURE),
+                convert_system_message_to_human=True
+            )
+            
+            # Create prompt with history placeholder
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                MessagesPlaceholder(variable_name="chat_history"),
+                ("human", "{question}")
+            ])
+            
+            # Create chain and stream
+            chain = prompt | streaming_llm
+            
+            # Stream response
+            full_response = ""
+            for chunk in chain.stream({
+                "chat_history": history_messages,
+                "question": question
+            }):
+                token = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                full_response += token
+                yield token
+            
+            # CRITICAL: Save the exchange to memory after streaming completes
+            # This ensures the user's question and bot's response are added to conversation history
+            memory.save_context(
+                {"input": question},
+                {"output": full_response}
+            )
+            
+            logger.info(f"✓ Stream completed for session {session_id}")
+            
+        except Exception as e:
+            logger.error(f"Error in stream_response: {e}", exc_info=True)
+            error_msg = f"I encountered an error: {str(e)[:100]}. Please try again."
+            yield error_msg

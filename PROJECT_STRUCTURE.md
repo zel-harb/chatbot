@@ -70,7 +70,7 @@ finalchat/
 │   │   └── Confidence boosting
 │   │
 │   ├── 📄 langchain_module.py     # LangChain integration (304 lines)
-│   │   ├── Groq LLM initialization
+│   │   ├── Gemini LLM initialization
 │   │   ├── HuggingFace embeddings
 │   │   ├── FAISS vectorstore
 │   │   ├── Conversation memory
@@ -113,12 +113,12 @@ app.py
 ├── session_manager.py  (session storage)
 ├── nlp_utils.py        (text processing)
 ├── langchain_module.py (RAG + LLM)
-│   ├── ChatGroq (Groq API)
+│   ├── ChatGoogleGenerativeAI (Gemini API)
 │   ├── HuggingFaceEmbeddings
 │   └── FAISS (vectorstore)
 └── External APIs
     ├── Rasa (port 5005)
-    └── Groq API (HTTP)
+    └── Google Gemini API (HTTP)
 ```
 
 ### **Frontend Dependencies**
@@ -163,7 +163,7 @@ aria-backend/
 ├── config.py          → config/config.py
 ├── session_manager.py → persistence/session_store.py
 ├── nlp_utils.py       → nlp/text_processor.py
-└── langchain_module.py→ llm/groq_engine.py
+└── langchain_module.py→ llm/gemini_engine.py
 ```
 
 But **current structure is fine for MVP** - don't restructure unless needed.
@@ -288,7 +288,7 @@ data/docs/*.txt
 
 ### **Sensitive Files (Keep Private)**
 ```
-.env                    ← Contains GROQ_API_KEY
+.env                    ← Contains GOOGLE_API_KEY
 .env.local             ← Local overrides
 docker-compose.override.yml
 ```

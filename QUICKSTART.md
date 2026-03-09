@@ -10,8 +10,9 @@ cd /home/zel-harb/Desktop/finalchat/aria-backend
 # Copy environment file
 cp .env.example .env
 
-# Edit .env and add your OpenAI API key
+# Edit .env and add your Google Gemini API key
 # nano .env  (or use your editor)
+# Get free key from: https://aistudio.google.com/app/apikey
 ```
 
 ### 2. Start Backend (Option A: Docker - Easiest)
@@ -94,7 +95,8 @@ cd aria-backend
 cp .env.example .env
 
 # 2. Edit .env with your settings
-# Required: OPENAI_API_KEY=your_key_here
+# Required: GOOGLE_API_KEY=your_key_here
+# Get free key from: https://aistudio.google.com/app/apikey
 nano .env  # or use your favorite editor
 
 # 3. Build and start all services
@@ -214,15 +216,16 @@ cd aria-backend/rasa
 rasa run -p 5005 --enable-api --cors "*"
 ```
 
-### Issue: "OpenAI API Key Error"
+### Issue: "Google API Key Error"
 
 **Solution:**
 ```bash
 # 1. Check your .env file
-cat aria-backend/.env | grep OPENAI
+cat aria-backend/.env | grep GOOGLE_API_KEY
 
 # 2. Verify the key is correct
-# 3. Restart Flask:
+# 3. Get a free key from: https://aistudio.google.com/app/apikey
+# 4. Restart Flask:
 python aria-backend/app.py
 ```
 

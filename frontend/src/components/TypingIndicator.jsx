@@ -1,20 +1,39 @@
-const IconBot = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
-  </svg>
-)
-
 export default function TypingIndicator() {
   return (
-    <div className="msg-group" style={{ animation: 'fadeIn 0.2s ease' }}>
-      <div className="msg-avatar ai"><IconBot /></div>
-      <div>
-        <div className="msg-label ai-label">ARIA</div>
-        <div className="typing-indicator">
-          <div className="typing-dot" />
-          <div className="typing-dot" />
-          <div className="typing-dot" />
-        </div>
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+      {/* Bot avatar */}
+      <div style={{
+        width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+        background: 'linear-gradient(135deg, #52B7FF, #9B6FFF)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 15
+      }}></div>
+
+      <div style={{
+        background: 'rgba(255,255,255,0.05)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: '16px 16px 16px 4px',
+        padding: '12px 20px',
+        display: 'flex', gap: 6, alignItems: 'center'
+      }}>
+        <div style={{
+          width: 7, height: 7, borderRadius: '50%',
+          background: '#52B7FF',
+          animation: 'bounce 1.4s infinite ease-in-out both',
+          animationDelay: '0s'
+        }} />
+        <div style={{
+          width: 7, height: 7, borderRadius: '50%',
+          background: '#9B6FFF',
+          animation: 'bounce 1.4s infinite ease-in-out both',
+          animationDelay: '0.16s'
+        }} />
+        <div style={{
+          width: 7, height: 7, borderRadius: '50%',
+          background: '#52B7FF',
+          animation: 'bounce 1.4s infinite ease-in-out both',
+          animationDelay: '0.32s'
+        }} />
       </div>
     </div>
   )

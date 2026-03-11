@@ -1,77 +1,197 @@
 import ReactMarkdown from 'react-markdown'
 
-const IconBot = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
-  </svg>
-)
-
-const IconCopy = () => (
-  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-  </svg>
-)
-
-const IconAlert = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-  </svg>
-)
-
-export default function Message({ message, userInitials }) {
+export default function Message({ message, userInitials, onRemoveFile, onSendMessage }) {
   const isBot = message.sender === 'bot'
-  const isError = message.isError
+  const isError = message.isError || (isBot && message.text?.startsWith('Error:'))
 
-  const formatTime = (ts) => {
+  const formatTime = (timestamp) => {
     try {
-      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    } catch { return '' }
+      const date = typeof timestamp === 'string' ? new Date(timestamp) : timestamp
+      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    } catch {
+      return ''
+    }
   }
 
-  const handleCopy = () => {
-    navigator.clipboard?.writeText(message.text)
-  }
-
+  // ── Fix 2: Error bubble ──
   if (isError) {
     return (
-      <div className="msg-group" style={{ animation: 'msgIn 0.25s ease both' }}>
-        <div className="msg-avatar ai" style={{ color: 'var(--error)' }}>
-          <IconAlert />
-        </div>
-        <div>
-          <div className="bubble error">
-            <div className="error-label">Error</div>
-            <div>{message.text}</div>
+      <div className="msg-group flex justify-start gap-3 animate-fadeIn" style={{ animation: 'fadeUp .35s ease' }}>
+        {/* Bot avatar */}
+        <div style={{
+          width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+          background: 'linear-gradient(135deg, #FF7E5F, #FE5196)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 15, marginTop: 2
+        }}>⚠️</div>
+        <div style={{
+          maxWidth: '70%',
+          background: 'rgba(255,126,95,0.12)',
+          border: '1px solid rgba(255,126,95,0.3)',
+          borderRadius: '16px 16px 16px 4px',
+          padding: '12px 16px',
+          color: '#FFB09C',
+          fontSize: 14
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4, color: '#FF7E5F', fontSize: 12 }}>
+            Connection Error
           </div>
-          <div className="msg-time">{formatTime(message.timestamp)}</div>
+          <div style={{ lineHeight: 1.5 }}>{message.text}</div>
+          <span className="msg-time" style={{ fontSize: 11, color: 'rgba(255,176,156,0.5)', marginTop: 6, display: 'block' }}>
+            {formatTime(message.timestamp)}
+          </span>
         </div>
       </div>
     )
   }
 
+  // ── Fix 3: Normal chat bubbles with avatars ──
   return (
-    <div className={`msg-group${isBot ? '' : ' user'}`}>
-      {isBot ? (
-        <div className="msg-avatar ai"><IconBot /></div>
-      ) : (
-        <div className="msg-avatar human">{userInitials}</div>
+    <div
+      className="msg-group"
+      style={{
+        display: 'flex',
+        justifyContent: isBot ? 'flex-start' : 'flex-end',
+        gap: 10,
+        animation: 'fadeUp .35s ease'
+      }}
+    >
+      {/* Bot avatar (left) */}
+      {isBot && (
+        <div style={{
+          width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+          background: 'linear-gradient(135deg, #52B7FF, #9B6FFF)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 15, marginTop: 2,
+          boxShadow: '0 0 12px rgba(82,183,255,0.25)'
+        }}>🤖</div>
       )}
-      <div>
-        {isBot && <div className="msg-label ai-label">ARIA</div>}
-        <div className={`bubble${isBot ? ' ai' : ' human'}`}>
-          <ReactMarkdown>{message.text}</ReactMarkdown>
+
+      {/* Bubble */}
+      <div
+        className={isBot ? 'message-bubble' : 'message-bubble user-bubble'}
+        style={{
+          maxWidth: '70%',
+          padding: '12px 16px',
+          borderRadius: isBot ? '16px 16px 16px 4px' : '16px 16px 4px 16px',
+          background: isBot
+            ? 'rgba(255,255,255,0.05)'
+            : 'linear-gradient(135deg, #52B7FF, #9B6FFF)',
+          border: isBot ? '1px solid rgba(255,255,255,0.08)' : 'none',
+          color: isBot ? '#C8CEE0' : '#fff',
+          fontSize: 14,
+          lineHeight: 1.6,
+          wordBreak: 'break-word'
+        }}
+      >
+        <div className="markdown-content">
+          <ReactMarkdown
+            components={{
+              h1: ({ node, ...props }) => <h1 {...props} />,
+              h2: ({ node, ...props }) => <h2 {...props} />,
+              h3: ({ node, ...props }) => <h3 {...props} />,
+              p: ({ node, ...props }) => <p {...props} />,
+              ul: ({ node, ...props }) => <ul {...props} />,
+              ol: ({ node, ...props }) => <ol {...props} />,
+              li: ({ node, ...props }) => <li {...props} />,
+              code: ({ node, inline, ...props }) =>
+                inline ? <code {...props} /> : <code {...props} />,
+              pre: ({ node, ...props }) => <pre {...props} />,
+              strong: ({ node, ...props }) => <strong {...props} />,
+            }}
+          >
+            {message.text}
+          </ReactMarkdown>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div className="msg-time">{formatTime(message.timestamp)}</div>
-          {isBot && message.text && (
-            <div className="bubble-actions">
-              <button className="bubble-action" onClick={handleCopy}>
-                <IconCopy /> Copy
-              </button>
+        {/* File upload notification actions */}
+        {message.isFileNotification && onRemoveFile && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginTop: 10,
+            paddingTop: 10,
+            borderTop: '1px solid rgba(255,255,255,0.06)'
+          }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {['Summarize', 'Key points', 'Quiz me'].map(action => (
+                <button
+                  key={action}
+                  onClick={() => onSendMessage && onSendMessage(action)}
+                  style={{
+                    padding: '4px 10px',
+                    background: 'rgba(82,183,255,0.08)',
+                    border: '1px solid rgba(82,183,255,0.2)',
+                    borderRadius: 6,
+                    color: '#52B7FF',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    transition: 'all 0.12s'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = 'rgba(82,183,255,0.15)'
+                    e.currentTarget.style.borderColor = 'rgba(82,183,255,0.4)'
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = 'rgba(82,183,255,0.08)'
+                    e.currentTarget.style.borderColor = 'rgba(82,183,255,0.2)'
+                  }}
+                >
+                  {action}
+                </button>
+              ))}
             </div>
-          )}
-        </div>
+            <button
+              onClick={onRemoveFile}
+              style={{
+                padding: '4px 10px',
+                background: 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.2)',
+                borderRadius: 6,
+                color: '#EF4444',
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+                transition: 'all 0.12s'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(239,68,68,0.15)'
+                e.currentTarget.style.borderColor = 'rgba(239,68,68,0.4)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(239,68,68,0.08)'
+                e.currentTarget.style.borderColor = 'rgba(239,68,68,0.2)'
+              }}
+            >
+              ✕ Remove file
+            </button>
+          </div>
+        )}
+
+        {/* Fix 7: Timestamp visible on hover only */}
+        <span className="msg-time" style={{
+          fontSize: 11,
+          color: isBot ? 'rgba(200,206,224,0.4)' : 'rgba(255,255,255,0.5)',
+          marginTop: 6,
+          display: 'block'
+        }}>
+          {formatTime(message.timestamp)}
+        </span>
       </div>
+
+      {/* User avatar (right) */}
+      {!isBot && (
+        <div style={{
+          width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+          background: 'linear-gradient(135deg, #52B7FF, #9B6FFF)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 12, fontWeight: 700, color: '#fff', marginTop: 2,
+          fontFamily: 'inherit'
+        }}>{userInitials || 'U'}</div>
+      )}
     </div>
   )
 }

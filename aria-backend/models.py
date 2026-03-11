@@ -70,3 +70,51 @@ class User(db.Model):
             'email': self.email,
             'created_at': self.created_at.isoformat()
         }
+
+
+class Roadmap(db.Model):
+    """Saved roadmap with progress tracking."""
+    __tablename__ = 'roadmaps'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(80), nullable=False, index=True)
+    roadmap_id = db.Column(db.String(200), nullable=False)
+    roadmap_data = db.Column(db.Text, nullable=False, default='{}')
+    completed_items = db.Column(db.Text, nullable=False, default='[]')
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('user_id', 'roadmap_id', name='uq_user_roadmap'),)
+
+    def to_dict(self):
+        import json
+        return {
+            'id': self.id,
+            'roadmap_id': self.roadmap_id,
+            'roadmap_data': json.loads(self.roadmap_data),
+            'completed_items': json.loads(self.completed_items),
+            'updated_at': self.updated_at.isoformat()
+        }
+
+
+class QuizResult(db.Model):
+    """Saved quiz result history."""
+    __tablename__ = 'quiz_history'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(80), nullable=False, index=True)
+    topic = db.Column(db.String(200))
+    score = db.Column(db.Integer)
+    total = db.Column(db.Integer)
+    percentage = db.Column(db.Float)
+    questions_data = db.Column(db.Text, default='[]')
+    taken_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'topic': self.topic,
+            'score': self.score,
+            'total': self.total,
+            'percentage': self.percentage,
+            'taken_at': self.taken_at.isoformat()
+        }

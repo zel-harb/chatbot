@@ -1,64 +1,81 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
-const IconX = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-  </svg>
-)
-const IconCheck = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="20 6 9 17 4 12"/>
-  </svg>
-)
-const IconArrowRight = () => (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-  </svg>
-)
+const BACKEND = 'http://localhost:5000'
+const LOCAL_KEY = 'aria_quiz_history'
 
-export default function QuizPanel({ authToken, onClose }) {
-  const [phase, setPhase] = useState('setup') // setup | quiz | results
+export default function QuizPanel({ authToken, onClose, onSaveToChat }) {
+  // ── Tabs: 'setup' | 'quiz' | 'result' | 'history' ──
+  const [tab, setTab] = useState('setup')
   const [topic, setTopic] = useState('')
   const [numQuestions, setNumQuestions] = useState(5)
-  const [difficulty, setDifficulty] = useState('medium')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [questions, setQuestions] = useState([])
+  const [questions, setQuestions] = useState(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [selectedAnswer, setSelectedAnswer] = useState(null)
   const [showExplanation, setShowExplanation] = useState(false)
   const [score, setScore] = useState(0)
-  const [answers, setAnswers] = useState([])
+  const [answered, setAnswered] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [userAnswers, setUserAnswers] = useState([])
 
-  const letters = ['A', 'B', 'C', 'D', 'E', 'F']
+  // History
+  const [quizHistory, setQuizHistory] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
 
-  const generateQuiz = async () => {
-    if (!topic.trim()) { setError('Please enter a topic.'); return }
-    setError('')
-    setLoading(true)
+  // ── Load history on mount ──
+  useEffect(() => {
+    loadHistory()
+  }, [])
+
+  const loadHistory = async () => {
+    setHistoryLoading(true)
     try {
-      const res = await fetch('http://localhost:5000/quiz', {
+      const res = await fetch(`${BACKEND}/quiz/history`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setQuizHistory(data)
+        // Sync to localStorage as backup
+        localStorage.setItem(LOCAL_KEY, JSON.stringify(data))
+      } else {
+        throw new Error('backend')
+      }
+    } catch {
+      // Fallback to localStorage
+      try {
+        const local = JSON.parse(localStorage.getItem(LOCAL_KEY) || '[]')
+        setQuizHistory(local)
+      } catch { /* empty */ }
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  // ── Generate quiz ──
+  const handleStart = async () => {
+    if (!topic.trim()) return
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`${BACKEND}/quiz`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify({
-          topic: topic.trim(),
-          num_questions: numQuestions,
-          difficulty
-        })
+        body: JSON.stringify({ topic: topic.trim(), num_questions: numQuestions })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to generate quiz')
-      if (!data.questions?.length) throw new Error('No questions returned')
       setQuestions(data.questions)
-      setPhase('quiz')
       setCurrentIndex(0)
       setScore(0)
-      setAnswers([])
       setSelectedAnswer(null)
       setShowExplanation(false)
+      setAnswered(false)
+      setUserAnswers([])
+      setTab('quiz')
     } catch (err) {
       setError(err.message)
     } finally {
@@ -66,167 +83,336 @@ export default function QuizPanel({ authToken, onClose }) {
     }
   }
 
-  const handleAnswer = (choiceIdx) => {
-    if (selectedAnswer !== null) return
-    const q = questions[currentIndex]
-    const isCorrect = choiceIdx === q.correct_answer
-    setSelectedAnswer(choiceIdx)
+  // ── Select answer ──
+  const handleSelect = (letter) => {
+    if (answered) return
+    setSelectedAnswer(letter)
+    setAnswered(true)
     setShowExplanation(true)
-    if (isCorrect) setScore(prev => prev + 1)
-    setAnswers(prev => [...prev, { question: currentIndex, selected: choiceIdx, correct: isCorrect }])
-  }
-
-  const nextQuestion = () => {
-    if (currentIndex + 1 >= questions.length) {
-      setPhase('results')
-    } else {
-      setCurrentIndex(prev => prev + 1)
-      setSelectedAnswer(null)
-      setShowExplanation(false)
+    setUserAnswers(prev => [...prev, letter])
+    if (letter === questions[currentIndex].correct) {
+      setScore(s => s + 1)
     }
   }
 
-  const restart = () => {
-    setPhase('setup')
-    setTopic('')
-    setQuestions([])
-    setScore(0)
-    setAnswers([])
-    setError('')
+  // ── Next / Finish ──
+  const handleNext = () => {
+    if (currentIndex + 1 >= questions.length) {
+      // Calculate final score (current score + this question if correct)
+      const finalScore = score
+      const pct = Math.round((finalScore / questions.length) * 100)
+
+      // Save to backend
+      const result = {
+        topic,
+        score: finalScore,
+        total: questions.length,
+        percentage: pct,
+        questions: questions.map((q, i) => ({
+          question: q.question,
+          correct: q.correct,
+          user_answer: userAnswers[i] || null,
+          was_correct: (userAnswers[i] || null) === q.correct
+        }))
+      }
+      saveQuizResult(result)
+
+      // Save to chat
+      if (onSaveToChat) {
+        let summary = `**Quiz Results: ${topic}**\n`
+        summary += `Score: **${finalScore}/${questions.length}** (${pct}%)\n\n`
+        questions.forEach((q, i) => {
+          summary += `**Q${i + 1}.** ${q.question}\n`
+          summary += `Answer: **${q.correct}** — ${q.explanation}\n\n`
+        })
+        onSaveToChat(summary)
+      }
+
+      setTab('result')
+    } else {
+      setCurrentIndex(i => i + 1)
+      setSelectedAnswer(null)
+      setShowExplanation(false)
+      setAnswered(false)
+    }
   }
 
-  const q = questions[currentIndex]
-  const progress = questions.length > 0 ? ((currentIndex + (selectedAnswer !== null ? 1 : 0)) / questions.length) * 100 : 0
+  // ── Save quiz to backend + localStorage ──
+  const saveQuizResult = async (result) => {
+    // Backend
+    try {
+      await fetch(`${BACKEND}/quiz/save`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify(result)
+      })
+    } catch (e) { console.error('Quiz save failed:', e) }
 
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <span className="modal-title">
-            {phase === 'setup' ? 'Generate Quiz' : phase === 'quiz' ? 'Quiz' : 'Results'}
-          </span>
-          {phase === 'quiz' && (
-            <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', marginRight: 12 }}>
-              <span className="pill counter">{currentIndex + 1}/{questions.length}</span>
-              <span className="pill score">{score} correct</span>
-            </div>
-          )}
-          <button className="modal-close" onClick={onClose}><IconX /></button>
-        </div>
+    // localStorage backup
+    try {
+      const history = JSON.parse(localStorage.getItem(LOCAL_KEY) || '[]')
+      history.unshift({ ...result, taken_at: new Date().toISOString() })
+      localStorage.setItem(LOCAL_KEY, JSON.stringify(history.slice(0, 20)))
+    } catch { /* ignore */ }
 
-        {/* ── Setup ── */}
-        {phase === 'setup' && (
-          <div>
-            {error && <div className="alert-error">{error}</div>}
-            <div style={{ marginBottom: 14 }}>
-              <label className="field-label">Topic</label>
-              <input
-                className="field-input"
-                value={topic}
-                onChange={e => setTopic(e.target.value)}
-                placeholder="e.g. Machine Learning, React Hooks"
-                autoFocus
-              />
-            </div>
-            <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-              <div style={{ flex: 1 }}>
-                <label className="field-label">Questions</label>
-                <select
-                  className="field-input"
-                  value={numQuestions}
-                  onChange={e => setNumQuestions(Number(e.target.value))}
-                >
-                  {[3, 5, 10, 15].map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </div>
-              <div style={{ flex: 1 }}>
-                <label className="field-label">Difficulty</label>
-                <select
-                  className="field-input"
-                  value={difficulty}
-                  onChange={e => setDifficulty(e.target.value)}
-                >
-                  <option value="easy">Easy</option>
-                  <option value="medium">Medium</option>
-                  <option value="hard">Hard</option>
-                </select>
-              </div>
-            </div>
-            <button className="btn-primary full" onClick={generateQuiz} disabled={loading}>
-              {loading ? <span className="spinner" /> : null}
-              {loading ? 'Generating...' : 'Generate Quiz'}
-            </button>
+    // Refresh history
+    loadHistory()
+  }
+
+  // ── Restart ──
+  const handleRestart = () => {
+    setQuestions(null)
+    setTopic('')
+    setScore(0)
+    setCurrentIndex(0)
+    setUserAnswers([])
+    setTab('setup')
+  }
+
+  const q = questions?.[currentIndex]
+
+  /* ═══════════════════════════════════════
+     RESULT SCREEN
+     ═══════════════════════════════════════ */
+  if (tab === 'result' && questions) {
+    const pct = Math.round((score / questions.length) * 100)
+    return (
+      <div className="quiz-overlay">
+        <div className="quiz-modal" style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>
+            {pct >= 70 ? '🎉' : pct >= 40 ? '👍' : '📚'}
           </div>
-        )}
+          <h2 className="font-brand" style={{ fontSize: 20, fontWeight: 800, color: '#E4E8F5', marginBottom: 4 }}>
+            Quiz Complete!
+          </h2>
+          <p style={{ fontSize: 13, color: '#7A82A0', marginBottom: 16 }}>
+            Topic: <span style={{ fontWeight: 600, color: '#9AA3BF' }}>{topic}</span>
+          </p>
+          <div className="quiz-final-score">{pct}%</div>
+          <p className="quiz-final-label">
+            You got <span style={{ fontWeight: 700, color: '#52B7FF' }}>{score}</span> out of <span style={{ fontWeight: 700, color: '#E4E8F5' }}>{questions.length}</span> correct
+          </p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 16 }}>
+            <button className="quiz-next-btn" onClick={handleRestart}>New Quiz</button>
+            <button className="quiz-quit-btn" onClick={() => setTab('history')}>History</button>
+            <button className="quiz-quit-btn" onClick={onClose}>Close</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
-        {/* ── Quiz ── */}
-        {phase === 'quiz' && q && (
+  /* ═══════════════════════════════════════
+     QUESTION SCREEN
+     ═══════════════════════════════════════ */
+  if (tab === 'quiz' && questions && q) {
+    const isCorrectAnswer = selectedAnswer === q.correct
+    return (
+      <div className="quiz-overlay">
+        <div className="quiz-modal">
+          <div className="quiz-top">
+            <span className="quiz-counter">
+              Question {currentIndex + 1} / {questions.length}
+            </span>
+            <span className="quiz-score">Score: {score}</span>
+          </div>
+
+          <div className="quiz-progress-track">
+            <div
+              className="quiz-progress-fill"
+              style={{ width: `${((currentIndex + (answered ? 1 : 0)) / questions.length) * 100}%` }}
+            />
+          </div>
+
+          <h3 className="quiz-question">{q.question}</h3>
+
           <div>
-            <div className="quiz-progress">
-              <div className="quiz-progress-bar" style={{ width: `${progress}%` }} />
-            </div>
-            <div className="quiz-q">{q.question}</div>
-            {q.choices?.map((choice, i) => {
-              let cls = 'quiz-choice'
-              if (selectedAnswer !== null) {
-                if (i === q.correct_answer) cls += ' correct'
-                else if (i === selectedAnswer) cls += ' wrong'
+            {q.options.map((opt, i) => {
+              const letter = ['A', 'B', 'C', 'D'][i]
+              const isCorrect = letter === q.correct
+              const isSelected = letter === selectedAnswer
+              let cls = 'quiz-option'
+              if (answered) {
+                if (isCorrect) cls += ' correct'
+                else if (isSelected && !isCorrect) cls += ' wrong'
                 else cls += ' dimmed'
               }
               return (
-                <button
-                  key={i}
-                  className={cls}
-                  onClick={() => handleAnswer(i)}
-                  disabled={selectedAnswer !== null}
-                >
-                  <span className="choice-letter">{letters[i]}</span>
-                  <span>{choice}</span>
+                <button key={letter} onClick={() => handleSelect(letter)} disabled={answered} className={cls}>
+                  <span style={{ fontWeight: 700, marginRight: 8 }}>{letter})</span>
+                  {opt.replace(/^[A-D]\)\s*/, '')}
+                  {answered && isCorrect && <span style={{ float: 'right' }}>✓</span>}
+                  {answered && isSelected && !isCorrect && <span style={{ float: 'right' }}>✗</span>}
                 </button>
               )
             })}
-            {showExplanation && q.explanation && (
-              <div className={`explanation-box ${selectedAnswer === q.correct_answer ? 'correct' : 'wrong'}`}>
-                {selectedAnswer === q.correct_answer ? (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontWeight: 700 }}>
-                    <IconCheck /> Correct
-                  </span>
-                ) : (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontWeight: 700 }}>
-                    <IconX /> Incorrect
-                  </span>
-                )}
-                {q.explanation}
-              </div>
-            )}
-            {selectedAnswer !== null && (
-              <div className="modal-footer">
-                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                  {currentIndex + 1} of {questions.length}
-                </span>
-                <button className="btn-primary" onClick={nextQuestion}>
-                  {currentIndex + 1 >= questions.length ? 'See Results' : 'Next'} <IconArrowRight />
-                </button>
-              </div>
-            )}
           </div>
-        )}
 
-        {/* ── Results ── */}
-        {phase === 'results' && (
-          <div style={{ textAlign: 'center', padding: '20px 0' }}>
-            <div className="score-display">{score}/{questions.length}</div>
-            <div className="score-subtext">
-              {score === questions.length ? 'Perfect score!' :
-               score >= questions.length * 0.7 ? 'Great job!' :
-               score >= questions.length * 0.5 ? 'Not bad!' : 'Keep practicing!'}
+          {showExplanation && (
+            <div className={`quiz-explanation ${isCorrectAnswer ? 'correct-exp' : 'wrong-exp'}`}>
+              <p style={{ fontWeight: 600, marginBottom: 4 }}>
+                {isCorrectAnswer ? '✓ Correct!' : `✗ Incorrect — answer is ${q.correct}`}
+              </p>
+              <p>{q.explanation}</p>
             </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 24 }}>
-              <button className="btn-ghost" onClick={restart}>New Quiz</button>
-              <button className="btn-primary" onClick={onClose}>Done</button>
-            </div>
+          )}
+
+          <div className="quiz-bottom">
+            <button className="quiz-quit-btn" onClick={onClose}>Quit</button>
+            {answered && (
+              <button className="quiz-next-btn" onClick={handleNext}>
+                {currentIndex + 1 >= questions.length ? 'See Results' : 'Next →'}
+              </button>
+            )}
           </div>
-        )}
+        </div>
+      </div>
+    )
+  }
+
+  /* ═══════════════════════════════════════
+     HISTORY SCREEN
+     ═══════════════════════════════════════ */
+  if (tab === 'history') {
+    return (
+      <div className="quiz-overlay">
+        <div className="quiz-modal">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <h2 className="font-brand" style={{ fontSize: 20, fontWeight: 800, color: '#E4E8F5' }}>
+              Quiz History
+            </h2>
+            <button
+              onClick={() => setTab('setup')}
+              style={{ background: 'none', border: 'none', color: '#525C78', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}
+            >
+              &times;
+            </button>
+          </div>
+
+          {historyLoading ? (
+            <div style={{ textAlign: 'center', padding: '30px 0', color: '#7A82A0', fontSize: 13 }}>
+              Loading history...
+            </div>
+          ) : quizHistory.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '30px 0', color: '#525C78', fontSize: 13 }}>
+              No quizzes taken yet
+            </div>
+          ) : (
+            <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+              {quizHistory.map((h, i) => (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '10px 14px', marginBottom: 6,
+                  background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
+                  borderRadius: 10
+                }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: '#E4E8F5' }}>{h.topic}</div>
+                    <div style={{ fontSize: 11, color: '#525C78' }}>
+                      {h.score}/{h.total} · {h.taken_at ? new Date(h.taken_at).toLocaleDateString() : ''}
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: 20, fontWeight: 800, fontFamily: 'var(--font-display, Syne, sans-serif)',
+                    color: (h.percentage ?? 0) >= 80 ? '#23C55E' : (h.percentage ?? 0) >= 50 ? '#F59E0B' : '#EF4444'
+                  }}>
+                    {h.percentage ?? Math.round((h.score / h.total) * 100)}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 16 }}>
+            <button className="quiz-next-btn" onClick={() => setTab('setup')}>New Quiz</button>
+            <button className="quiz-quit-btn" onClick={onClose}>Close</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  /* ═══════════════════════════════════════
+     SETUP SCREEN
+     ═══════════════════════════════════════ */
+  return (
+    <div className="quiz-overlay">
+      <div className="quiz-modal">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <h2 className="font-brand" style={{ fontSize: 20, fontWeight: 800, color: '#E4E8F5' }}>
+            📝 Quiz Mode
+          </h2>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {quizHistory.length > 0 && (
+              <button
+                onClick={() => setTab('history')}
+                style={{
+                  background: 'rgba(82,183,255,0.08)', border: '1px solid rgba(82,183,255,0.2)',
+                  color: '#52B7FF', padding: '5px 10px', borderRadius: 6,
+                  fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
+                }}
+              >
+                History ({quizHistory.length})
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              style={{ background: 'none', border: 'none', color: '#525C78', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+
+        <label className="quiz-label">Topic</label>
+        <input
+          type="text"
+          value={topic}
+          onChange={e => setTopic(e.target.value)}
+          placeholder="e.g. Python basics, React hooks, Machine Learning..."
+          className="quiz-input"
+          style={{ marginBottom: 14 }}
+          onKeyDown={e => e.key === 'Enter' && handleStart()}
+        />
+
+        <label className="quiz-label">Number of questions</label>
+        <select
+          value={numQuestions}
+          onChange={e => setNumQuestions(Number(e.target.value))}
+          className="quiz-input"
+          style={{ marginBottom: 18 }}
+        >
+          {[3, 5, 10, 15, 20].map(n => (
+            <option key={n} value={n}>{n} questions</option>
+          ))}
+        </select>
+
+        {error && <div className="quiz-error">{error}</div>}
+
+        <button
+          onClick={handleStart}
+          disabled={loading || !topic.trim()}
+          className="quiz-start-btn"
+        >
+          {loading ? (
+            <>
+              <span style={{
+                width: 16, height: 16,
+                border: '2px solid #fff',
+                borderTopColor: 'transparent',
+                borderRadius: '50%',
+                display: 'inline-block',
+                animation: 'spin 0.6s linear infinite'
+              }} />
+              Generating Quiz...
+            </>
+          ) : (
+            'Start Quiz'
+          )}
+        </button>
       </div>
     </div>
   )

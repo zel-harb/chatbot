@@ -10,7 +10,7 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 
 from config import Config
-from models import db, User
+from models import db, User, Roadmap, QuizResult
 from session_manager import SessionManager
 from langchain_module import LangChainModule
 import nlp_utils
@@ -847,6 +847,20 @@ def delete_session(session_id: str):
         return jsonify({"error": str(e)}), 500
 
 
+# ============ FILE CONTEXT CLEAR ============
+
+@app.route("/session/<session_id>/file", methods=["DELETE"])
+def clear_file_context(session_id: str):
+    """Remove uploaded file context from a session."""
+    try:
+        logger.info(f"DELETE /session/{session_id}/file")
+        langchain_module.clear_file_context(session_id)
+        return jsonify({"status": "ok", "message": "File context cleared"}), 200
+    except Exception as e:
+        logger.error(f"Clear file context error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 # ============ FILE UPLOAD ============
 
 ALLOWED_EXTENSIONS = {'pdf', 'txt'}
@@ -1033,6 +1047,89 @@ def generate_roadmap():
     except Exception as e:
         logger.error(f"Roadmap error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
+
+# ============ ROADMAP PERSISTENCE ============
+
+@app.route("/roadmap/save", methods=["POST"])
+@jwt_required()
+def save_roadmap():
+    """Save or update roadmap progress for the current user."""
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    roadmap_id = data.get("roadmap_id")
+    if not roadmap_id:
+        return jsonify({"error": "roadmap_id is required"}), 400
+
+    existing = Roadmap.query.filter_by(user_id=user_id, roadmap_id=roadmap_id).first()
+    if existing:
+        existing.roadmap_data = json.dumps(data.get("roadmap_data", {}))
+        existing.completed_items = json.dumps(data.get("completed_items", []))
+        existing.updated_at = datetime.utcnow()
+    else:
+        existing = Roadmap(
+            user_id=user_id,
+            roadmap_id=roadmap_id,
+            roadmap_data=json.dumps(data.get("roadmap_data", {})),
+            completed_items=json.dumps(data.get("completed_items", [])),
+            updated_at=datetime.utcnow()
+        )
+        db.session.add(existing)
+
+    db.session.commit()
+    return jsonify({"status": "saved", "roadmap_id": roadmap_id})
+
+
+@app.route("/roadmap/list", methods=["GET"])
+@jwt_required()
+def get_roadmaps():
+    """Get all saved roadmaps for the current user."""
+    user_id = get_jwt_identity()
+    roadmaps = Roadmap.query.filter_by(user_id=user_id).order_by(Roadmap.updated_at.desc()).all()
+    return jsonify([r.to_dict() for r in roadmaps])
+
+
+@app.route("/roadmap/delete/<roadmap_id>", methods=["DELETE"])
+@jwt_required()
+def delete_roadmap(roadmap_id):
+    """Delete a saved roadmap."""
+    user_id = get_jwt_identity()
+    r = Roadmap.query.filter_by(user_id=user_id, roadmap_id=roadmap_id).first()
+    if r:
+        db.session.delete(r)
+        db.session.commit()
+    return jsonify({"status": "deleted"})
+
+
+# ============ QUIZ PERSISTENCE ============
+
+@app.route("/quiz/save", methods=["POST"])
+@jwt_required()
+def save_quiz():
+    """Save a quiz result for the current user."""
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    result = QuizResult(
+        user_id=user_id,
+        topic=data.get("topic", ""),
+        score=data.get("score", 0),
+        total=data.get("total", 0),
+        percentage=data.get("percentage", 0),
+        questions_data=json.dumps(data.get("questions", [])),
+        taken_at=datetime.utcnow()
+    )
+    db.session.add(result)
+    db.session.commit()
+    return jsonify({"status": "saved", "id": result.id})
+
+
+@app.route("/quiz/history", methods=["GET"])
+@jwt_required()
+def get_quiz_history():
+    """Get quiz history for the current user (last 20)."""
+    user_id = get_jwt_identity()
+    history = QuizResult.query.filter_by(user_id=user_id).order_by(QuizResult.taken_at.desc()).limit(20).all()
+    return jsonify([h.to_dict() for h in history])
 
 
 # ============ ERROR HANDLERS ============

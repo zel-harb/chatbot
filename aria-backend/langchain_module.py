@@ -186,7 +186,13 @@ class LangChainModule:
             self.file_contexts[session_id] = []
         self.file_contexts[session_id].append({"filename": filename, "text": text})
         logger.info(f"✓ File context added for session {session_id}: {filename} ({len(text)} chars)")
-    
+
+    def clear_file_context(self, session_id: str) -> None:
+        """Clear file context for a session."""
+        if session_id in self.file_contexts:
+            del self.file_contexts[session_id]
+            logger.info(f"✓ File context cleared for session {session_id}")
+
     def _build_file_context_prompt(self, session_id: str) -> str:
         """Build file context section for the system prompt."""
         if session_id not in self.file_contexts or not self.file_contexts[session_id]:

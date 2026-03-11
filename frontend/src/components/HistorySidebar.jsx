@@ -1,121 +1,164 @@
-const IconHash = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></svg>
-)
-const IconPlus = () => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-)
-const IconTrash = () => (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-)
-const IconX = () => (
-  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-)
-
 export default function HistorySidebar({
+  isOpen,
   conversations,
   currentConversationId,
   onSelectConversation,
   onDeleteConversation,
   onClearHistory,
-  onNewChat,
-  userInitials,
-  username
+  onClose
 }) {
   const formatDate = (dateString) => {
     try {
       const date = new Date(dateString)
       const now = new Date()
-      const diff = Math.ceil(Math.abs(now - date) / (1000 * 60 * 60 * 24))
-      if (diff === 0) return 'Today'
-      if (diff === 1) return 'Yesterday'
-      if (diff < 7) return `${diff}d ago`
-      return date.toLocaleDateString('en', { month: 'short', day: 'numeric' })
-    } catch { return '' }
+      const diffTime = Math.abs(now - date)
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+      if (diffDays === 0) return 'Today'
+      if (diffDays === 1) return 'Yesterday'
+      if (diffDays < 7) return `${diffDays} days ago`
+      if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`
+      return date.toLocaleDateString()
+    } catch {
+      return ''
+    }
   }
 
   return (
-    <aside className="sidebar">
-      {/* Brand */}
-      <div className="sidebar-brand">
-        <div className="brand-mark">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
-          </svg>
-        </div>
-        <span className="brand-name">ARIA</span>
-      </div>
+    <>
+      {/* Overlay */}
+      {isOpen && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+            zIndex: 20, backdropFilter: 'blur(4px)'
+          }}
+          onClick={onClose}
+        />
+      )}
 
-      {/* New chat */}
-      <button className="new-chat-btn" onClick={onNewChat}>
-        <IconPlus /> New conversation
-      </button>
-
-      {/* History list */}
-      <div className="sidebar-section">History</div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 0 8px' }}>
-        {conversations.length === 0 ? (
-          <div style={{ padding: '20px 16px', color: 'var(--text-disabled)', fontSize: 12, textAlign: 'center' }}>
-            No conversations yet
+      {/* Sidebar panel */}
+      <aside style={{
+        position: 'fixed', top: 0, left: 0, height: '100vh',
+        width: 260,
+        background: '#111828',
+        borderRight: '1px solid rgba(255,255,255,0.07)',
+        display: 'flex', flexDirection: 'column',
+        zIndex: 30,
+        transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
+        transition: 'transform 0.25s ease'
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '16px 20px',
+          borderBottom: '1px solid rgba(255,255,255,0.07)'
+        }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: 1.5, color: '#5A6280', marginBottom: 4
+          }}>
+            CONVERSATIONS
           </div>
-        ) : (
-          conversations.map(c => (
-            <div
-              key={c.id}
-              className={`history-item${c.id === currentConversationId ? ' active' : ''}`}
-              onClick={() => onSelectConversation(c.id)}
-            >
-              <IconHash />
-              <span className="line-clamp-1" style={{ flex: 1 }}>
-                {c.preview || 'New conversation'}
-              </span>
-              <button
-                onClick={e => { e.stopPropagation(); onDeleteConversation(c.id) }}
-                style={{
-                  background: 'none', border: 'none',
-                  color: 'var(--text-disabled)',
-                  cursor: 'pointer', padding: 2,
-                  display: 'flex', alignItems: 'center',
-                  opacity: 0, transition: 'opacity 0.12s'
-                }}
-                className="del-btn"
-                onMouseEnter={e => e.currentTarget.style.color = 'var(--error)'}
-                onMouseLeave={e => e.currentTarget.style.color = 'var(--text-disabled)'}
-              >
-                <IconX />
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="sidebar-footer">
-        <div className="user-avatar">{userInitials}</div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="user-name">{username}</div>
-          <div className="user-role">Free plan</div>
+          <span style={{ fontSize: 12, color: '#4A5270' }}>
+            {conversations.length} chat{conversations.length !== 1 ? 's' : ''}
+          </span>
         </div>
-        {conversations.length > 0 && (
-          <button
-            onClick={onClearHistory}
-            style={{
-              background: 'none', border: 'none',
-              color: 'var(--text-disabled)', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', padding: 4
-            }}
-            title="Clear all history"
-            onMouseEnter={e => e.currentTarget.style.color = 'var(--error)'}
-            onMouseLeave={e => e.currentTarget.style.color = 'var(--text-disabled)'}
-          >
-            <IconTrash />
-          </button>
-        )}
-      </div>
 
-      {/* Make delete buttons visible on hover via CSS-in-JS */}
-      <style>{`
-        .history-item:hover .del-btn { opacity: 1 !important; }
-      `}</style>
-    </aside>
+        {/* List */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px' }}>
+          {conversations.length === 0 ? (
+            <div style={{ padding: 20, textAlign: 'center', color: '#4A5270', fontSize: 13 }}>
+              <p>No conversations yet</p>
+              <p style={{ fontSize: 11, marginTop: 6 }}>Start chatting to build history</p>
+            </div>
+          ) : (
+            conversations.map((c) => (
+              <div
+                key={c.id}
+                onClick={() => onSelectConversation(c.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  marginBottom: 2,
+                  background: c.id === currentConversationId
+                    ? 'rgba(82,183,255,0.1)'
+                    : 'transparent',
+                  borderLeft: c.id === currentConversationId
+                    ? '3px solid #52B7FF'
+                    : '3px solid transparent',
+                  transition: 'all 0.15s',
+                  position: 'relative'
+                }}
+                onMouseEnter={e => {
+                  if (c.id !== currentConversationId)
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+                  e.currentTarget.querySelector('.del-btn').style.opacity = 1
+                }}
+                onMouseLeave={e => {
+                  if (c.id !== currentConversationId)
+                    e.currentTarget.style.background = 'transparent'
+                  e.currentTarget.querySelector('.del-btn').style.opacity = 0
+                }}
+              >
+                <span style={{ fontSize: 14, flexShrink: 0 }}>💬</span>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{
+                    fontSize: 13, fontWeight: 500, color: '#C8CEE0',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                  }}>
+                    {c.preview || 'New conversation'}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#4A5270', marginTop: 2 }}>
+                    {formatDate(c.lastUpdated || c.createdAt)}
+                  </div>
+                </div>
+
+                {/* Delete */}
+                <button
+                  className="del-btn"
+                  onClick={(e) => { e.stopPropagation(); onDeleteConversation(c.id) }}
+                  style={{
+                    background: 'none', border: 'none',
+                    color: '#FF7E5F', fontSize: 14, cursor: 'pointer',
+                    opacity: 0, transition: 'opacity 0.15s',
+                    padding: 2
+                  }}
+                  title="Delete"
+                >×</button>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Footer */}
+        {conversations.length > 0 && (
+          <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+            <button
+              onClick={onClearHistory}
+              style={{
+                width: '100%', padding: '8px 0',
+                background: 'rgba(255,126,95,0.08)',
+                border: '1px solid rgba(255,126,95,0.15)',
+                borderRadius: 8,
+                color: '#FF7E5F',
+                fontSize: 12, fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                fontFamily: 'inherit'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(255,126,95,0.15)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(255,126,95,0.08)'
+              }}
+            >
+              Clear All History
+            </button>
+          </div>
+        )}
+      </aside>
+    </>
   )
 }

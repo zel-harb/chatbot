@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -16,6 +17,7 @@ class Config:
     
     # Google Gemini Configuration (Free API)
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
+    GOOGLE_API_KEY_BACKUP: str = os.getenv("GOOGLE_API_KEY_BACKUP", "")
     
     # Rasa NLU Configuration
     RASA_URL: str = os.getenv("RASA_URL", "http://localhost:5005")
@@ -34,6 +36,14 @@ class Config:
     # Document and Embeddings Configuration
     DOCS_PATH: str = os.getenv("DOCS_PATH", "./data/docs")
     EMBEDDINGS_MODEL: str = os.getenv("EMBEDDINGS_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    
+    # Database Configuration
+    SQLALCHEMY_DATABASE_URI: str = os.getenv("DATABASE_URL", "sqlite:///aria.db")
+    SQLALCHEMY_TRACK_MODIFICATIONS: bool = False
+    
+    # JWT Configuration
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "jwt-secret-key-change-in-production")
+    JWT_ACCESS_TOKEN_EXPIRES: timedelta = timedelta(seconds=int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES", "86400")))
     
     @classmethod
     def validate(cls) -> None:
@@ -68,6 +78,7 @@ class Config:
         
         config_items = [
             ("GOOGLE_API_KEY", cls._mask_key(cls.GOOGLE_API_KEY)),
+            ("GOOGLE_API_KEY_BACKUP", cls._mask_key(cls.GOOGLE_API_KEY_BACKUP) if cls.GOOGLE_API_KEY_BACKUP else "(not set)"),
             ("RASA_URL", cls.RASA_URL),
             ("RASA_TOKEN", cls._mask_key(cls.RASA_TOKEN) if cls.RASA_TOKEN else "(not set)"),
             ("FLASK_SECRET_KEY", cls._mask_key(cls.FLASK_SECRET_KEY)),
@@ -78,6 +89,9 @@ class Config:
             ("CONFIDENCE_THRESHOLD", str(cls.CONFIDENCE_THRESHOLD)),
             ("DOCS_PATH", cls.DOCS_PATH),
             ("EMBEDDINGS_MODEL", cls.EMBEDDINGS_MODEL),
+            ("DATABASE_URI", cls.SQLALCHEMY_DATABASE_URI),
+            ("JWT_SECRET_KEY", cls._mask_key(cls.JWT_SECRET_KEY)),
+            ("JWT_TOKEN_EXPIRES", f"{int(cls.JWT_ACCESS_TOKEN_EXPIRES.total_seconds()) // 3600} hours"),
         ]
         
         for key, value in config_items:

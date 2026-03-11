@@ -2,13 +2,15 @@ import requests
 import logging
 import json
 from typing import Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 
 from config import Config
+from models import db, User
 from session_manager import SessionManager
 from langchain_module import LangChainModule
 import nlp_utils
@@ -21,7 +23,13 @@ Config.display()
 
 # Initialize Flask app
 app = Flask(__name__)
-app.secret_key = Config.FLASK_SECRET_KEY
+app.config.from_object(Config)
+
+# Initialize Database
+db.init_app(app)
+
+# Initialize JWT
+jwt = JWTManager(app)
 
 # Enable CORS for all origins
 CORS(app, origins="*")
@@ -36,6 +44,11 @@ logger = logging.getLogger(__name__)
 # Initialize global singletons
 session_manager = SessionManager()
 langchain_module = LangChainModule()
+
+# Create database tables
+with app.app_context():
+    db.create_all()
+    logger.info("✓ Database initialized successfully")
 
 logger.info("Flask application initialized successfully")
 logger.info(f"Rasa URL: {Config.RASA_URL}")
@@ -208,6 +221,141 @@ def check_admin_token() -> Tuple[bool, str]:
     return True, ""
 
 
+# ============ AUTHENTICATION ROUTES ============
+
+@app.route("/register", methods=["POST"])
+def register():
+    """
+    Register a new user account.
+    
+    Request body:
+    {
+        "username": str (required, 3-80 chars),
+        "email": str (required, valid email),
+        "password": str (required, 8+ chars)
+    }
+    
+    Response:
+    {
+        "message": str,
+        "user": {user object},
+        "access_token": str
+    }
+    """
+    try:
+        logger.info("POST /register")
+        
+        # Validate input
+        data = request.get_json() or {}
+        username = data.get("username", "").strip()
+        email = data.get("email", "").strip()
+        password = data.get("password", "")
+        
+        # Validation checks
+        if not username or len(username) < 3 or len(username) > 80:
+            logger.warning(f"Invalid username length: {len(username)}")
+            return jsonify({"error": "Username must be 3-80 characters"}), 400
+        
+        if not email or "@" not in email:
+            logger.warning(f"Invalid email format: {email}")
+            return jsonify({"error": "Valid email is required"}), 400
+        
+        if not password or len(password) < 8:
+            logger.warning("Password too short")
+            return jsonify({"error": "Password must be at least 8 characters"}), 400
+        
+        # Check if user already exists
+        existing_user = User.query.filter(
+            (User.username == username) | (User.email == email)
+        ).first()
+        
+        if existing_user:
+            logger.warning(f"User already exists: {username}")
+            return jsonify({"error": "Username or email already registered"}), 409
+        
+        # Create new user
+        user = User(username=username, email=email)
+        user.set_password(password)
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        # Generate JWT token
+        access_token = create_access_token(
+            identity=str(user.id),
+            expires_delta=Config.JWT_ACCESS_TOKEN_EXPIRES
+        )
+        
+        logger.info(f"✓ User registered successfully: {username}")
+        
+        return jsonify({
+            "message": "User registered successfully",
+            "user": user.to_dict(),
+            "access_token": access_token
+        }), 201
+    
+    except Exception as e:
+        logger.error(f"Registration error: {e}", exc_info=True)
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    """
+    Authenticate user and issue JWT token.
+    
+    Request body:
+    {
+        "username": str (required),
+        "password": str (required)
+    }
+    
+    Response:
+    {
+        "message": str,
+        "user": {user object},
+        "access_token": str
+    }
+    """
+    try:
+        logger.info("POST /login")
+        
+        # Validate input
+        data = request.get_json() or {}
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+        
+        if not username or not password:
+            logger.warning("Missing username or password in login attempt")
+            return jsonify({"error": "Username and password are required"}), 400
+        
+        # Find user
+        user = User.query.filter_by(username=username).first()
+        
+        if not user or not user.check_password(password):
+            logger.warning(f"Failed login attempt for user: {username}")
+            return jsonify({"error": "Invalid username or password"}), 401
+        
+        # Generate JWT token
+        access_token = create_access_token(
+            identity=str(user.id),
+            expires_delta=Config.JWT_ACCESS_TOKEN_EXPIRES
+        )
+        
+        logger.info(f"✓ User logged in successfully: {username}")
+        
+        return jsonify({
+            "message": "Login successful",
+            "user": user.to_dict(),
+            "access_token": access_token
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Login error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 # ============ ROUTES ============
 
 @app.route("/health", methods=["GET"])
@@ -231,9 +379,12 @@ def health():
 
 
 @app.route("/chat", methods=["POST"])
+@jwt_required()
 def chat():
     """
     Main chat endpoint that combines Rasa NLU and LangChain.
+    
+    Requires JWT authentication token in Authorization header.
     
     Input:
         {
@@ -252,6 +403,9 @@ def chat():
             "tokens": int
         }
     """
+    # Get authenticated user ID from JWT token
+    user_id = get_jwt_identity()
+    
     # Phrases that indicate Rasa is giving a generic fallback response
     # If Rasa response contains ANY of these phrases, force LangChain instead
     FALLBACK_PHRASES = [
@@ -392,9 +546,12 @@ def chat():
 
 
 @app.route("/chat/stream", methods=["POST"])
+@jwt_required()
 def chat_stream():
     """
     Streaming chat endpoint using Server-Sent Events (SSE).
+    
+    Requires JWT authentication token in Authorization header.
     
     Streams response tokens in real-time as they are generated by the LLM.
     Uses EventStream format compatible with browser EventSource API.
@@ -411,6 +568,9 @@ def chat_stream():
     
     Final event: data: [DONE]
     """
+    # Get authenticated user ID from JWT token
+    user_id = get_jwt_identity()
+    
     # CRITICAL FIX: Extract request data BEFORE yielding
     # This prevents Flask context loss in the generator
     try:
@@ -462,6 +622,16 @@ def chat_stream():
                 content=message
             )
             
+            # Generate title if this is the first user message in the session
+            history = session_manager.get_history(session_id)
+            user_messages = [m for m in history if m.get('role') == 'user']
+            if len(user_messages) == 1:
+                try:
+                    title = langchain_module.generate_title(message)
+                    yield f"data: {json.dumps({'title': title})}\n\n"
+                except Exception as title_err:
+                    logger.warning(f"Title generation failed: {title_err}")
+            
             # Stream tokens from LangChain
             full_response = ""
             tokens_used = nlp_utils.estimate_tokens(processed_message)
@@ -491,7 +661,15 @@ def chat_stream():
             
         except Exception as e:
             logger.error(f"Stream error: {e}", exc_info=True)
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            error_str = str(e).lower()
+            # Classify the error for the frontend
+            api_key_phrases = ["api key", "invalid", "expired", "quota", "forbidden", "403", "401", "429", "resource_exhausted", "permission_denied", "billing"]
+            is_api_key_error = any(p in error_str for p in api_key_phrases)
+            error_payload = {
+                'error': str(e),
+                'error_type': 'api_key' if is_api_key_error else 'general'
+            }
+            yield f"data: {json.dumps(error_payload)}\n\n"
             yield "data: [DONE]\n\n"
     
     return Response(
@@ -666,6 +844,194 @@ def delete_session(session_id: str):
     
     except Exception as e:
         logger.error(f"Delete session error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ============ FILE UPLOAD ============
+
+ALLOWED_EXTENSIONS = {'pdf', 'txt'}
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route("/upload", methods=["POST"])
+@jwt_required()
+def upload_file():
+    """
+    Upload a PDF or TXT file (max 5MB).
+    Extracts text and stores it as context for the session's LangChain conversation.
+    
+    Expects multipart/form-data with:
+        - file: The uploaded file
+        - session_id (optional): Conversation session ID
+    
+    Returns:
+        { "filename": str, "text_length": int, "message": str }
+    """
+    try:
+        current_user = get_jwt_identity()
+        logger.info(f"POST /upload from user: {current_user}")
+
+        if 'file' not in request.files:
+            return jsonify({"error": "No file provided"}), 400
+
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
+
+        if not allowed_file(file.filename):
+            return jsonify({"error": "Only PDF and TXT files are allowed"}), 400
+
+        # Check file size
+        file.seek(0, 2)  # seek to end
+        size = file.tell()
+        file.seek(0)     # seek back to start
+        if size > MAX_FILE_SIZE:
+            return jsonify({"error": f"File too large. Max size is 5MB, got {size / (1024*1024):.1f}MB"}), 400
+
+        session_id = request.form.get('session_id', 'default')
+        filename = file.filename
+        ext = filename.rsplit('.', 1)[1].lower()
+
+        # Extract text
+        extracted_text = ""
+        if ext == 'pdf':
+            try:
+                from PyPDF2 import PdfReader
+                reader = PdfReader(file)
+                pages = []
+                for page in reader.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        pages.append(page_text)
+                extracted_text = "\n".join(pages)
+            except Exception as pdf_err:
+                logger.error(f"PDF extraction error: {pdf_err}")
+                return jsonify({"error": f"Failed to extract text from PDF: {str(pdf_err)[:100]}"}), 400
+        elif ext == 'txt':
+            extracted_text = file.read().decode('utf-8', errors='replace')
+
+        if not extracted_text.strip():
+            return jsonify({"error": "No text could be extracted from the file"}), 400
+
+        # Store file context in LangChain module
+        langchain_module.set_file_context(session_id, filename, extracted_text)
+
+        logger.info(f"✓ File uploaded: {filename} ({len(extracted_text)} chars) for session {session_id}")
+        return jsonify({
+            "filename": filename,
+            "text_length": len(extracted_text),
+            "message": f"File '{filename}' uploaded successfully. You can now ask questions about it."
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Upload error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ============ QUIZ ============
+
+@app.route("/quiz", methods=["POST"])
+@jwt_required()
+def generate_quiz():
+    """
+    Generate a multiple choice quiz using LangChain / Gemini.
+    
+    Request body:
+    {
+        "topic": str (required),
+        "num_questions": int (optional, default 5, max 20)
+    }
+    
+    Response:
+    {
+        "topic": str,
+        "questions": [ { question, options, correct, explanation } ]
+    }
+    """
+    try:
+        current_user = get_jwt_identity()
+        logger.info(f"POST /quiz from user: {current_user}")
+        
+        data = request.get_json() or {}
+        topic = data.get("topic", "").strip()
+        num_questions = data.get("num_questions", 5)
+        
+        if not topic:
+            return jsonify({"error": "Topic is required"}), 400
+        
+        try:
+            num_questions = int(num_questions)
+            num_questions = max(1, min(num_questions, 20))
+        except (TypeError, ValueError):
+            num_questions = 5
+        
+        questions = langchain_module.generate_quiz(topic, num_questions)
+        
+        if not questions:
+            return jsonify({"error": "Failed to generate quiz. Please try again."}), 500
+        
+        logger.info(f"✓ Quiz generated: {len(questions)} questions on '{topic}'")
+        return jsonify({
+            "topic": topic,
+            "questions": questions
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Quiz error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+# ============ ROADMAP ============
+
+@app.route("/roadmap", methods=["POST"])
+@jwt_required()
+def generate_roadmap():
+    """
+    Generate an 8-week learning roadmap using LangChain / Gemini.
+    
+    Request body:
+    {
+        "technology": str (required),
+        "level": str (beginner | intermediate)
+    }
+    
+    Response:
+    {
+        "technology": str,
+        "level": str,
+        "weeks": [ { week, title, goals: [str], resources: [str] } ]
+    }
+    """
+    try:
+        current_user = get_jwt_identity()
+        logger.info(f"POST /roadmap from user: {current_user}")
+        
+        data = request.get_json() or {}
+        technology = data.get("technology", "").strip()
+        level = data.get("level", "beginner").strip().lower()
+        
+        if not technology:
+            return jsonify({"error": "Technology name is required"}), 400
+        
+        if level not in ("beginner", "intermediate"):
+            level = "beginner"
+        
+        weeks = langchain_module.generate_roadmap(technology, level)
+        
+        if not weeks:
+            return jsonify({"error": "Failed to generate roadmap. Please try again."}), 500
+        
+        logger.info(f"\u2713 Roadmap generated: {len(weeks)} weeks for '{technology}' ({level})")
+        return jsonify({
+            "technology": technology,
+            "level": level,
+            "weeks": weeks
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Roadmap error: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

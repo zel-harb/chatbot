@@ -2,28 +2,46 @@ import { useState, useRef, useEffect } from 'react'
 import ChatContainer from './components/ChatContainer'
 import MessageInput from './components/MessageInput'
 import HistorySidebar from './components/HistorySidebar'
+import Login from './components/Login'
+import QuizPanel from './components/QuizPanel'
+import RoadmapPanel from './components/RoadmapPanel'
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [user, setUser] = useState(null)
+  const [authToken, setAuthToken] = useState(null)
   const [messages, setMessages] = useState([])
   const [isLoading, setIsLoading] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [conversations, setConversations] = useState([])
   const [currentConversationId, setCurrentConversationId] = useState(null)
+  const [uploadedFile, setUploadedFile] = useState(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [showQuiz, setShowQuiz] = useState(false)
+  const [showRoadmap, setShowRoadmap] = useState(false)
   const messagesEndRef = useRef(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  // Load conversations from localStorage on mount
   useEffect(() => {
-    const savedConversations = localStorage.getItem('chatbot_conversations')
+    const savedToken = localStorage.getItem('auth_token')
+    const savedUser = localStorage.getItem('user')
+    if (savedToken && savedUser) {
+      setAuthToken(savedToken)
+      setUser(JSON.parse(savedUser))
+      setIsAuthenticated(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const savedConversations = localStorage.getItem(`chatbot_conversations_${user?.id}`)
     if (savedConversations) {
       try {
         const parsed = JSON.parse(savedConversations)
         setConversations(parsed)
-        
-        // Load the most recent conversation if it exists
         if (parsed.length > 0) {
           const mostRecent = parsed[0]
           setCurrentConversationId(mostRecent.id)
@@ -38,9 +56,8 @@ function App() {
     } else {
       startNewConversation()
     }
-  }, [])
+  }, [isAuthenticated, user])
 
-  // Auto-scroll when messages change
   useEffect(() => {
     scrollToBottom()
   }, [messages])
@@ -60,13 +77,11 @@ function App() {
   const saveConversation = (updatedMessages) => {
     const updatedConversations = [...conversations]
     const existingIndex = updatedConversations.findIndex(c => c.id === currentConversationId)
-    
     const messagePreview = updatedMessages
       .filter(m => m.sender === 'user')
       .map(m => m.text)
       .join(' ')
       .substring(0, 50)
-    
     if (existingIndex >= 0) {
       updatedConversations[existingIndex] = {
         ...updatedConversations[existingIndex],
@@ -84,30 +99,40 @@ function App() {
       }
       updatedConversations.unshift(newConversation)
     }
-    
     setConversations(updatedConversations)
-    localStorage.setItem('chatbot_conversations', JSON.stringify(updatedConversations))
+    localStorage.setItem(`chatbot_conversations_${user?.id}`, JSON.stringify(updatedConversations))
+  }
+
+  const handleLoginSuccess = (userData, token) => {
+    setUser(userData)
+    setAuthToken(token)
+    setIsAuthenticated(true)
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem('auth_token')
+    localStorage.removeItem('user')
+    setIsAuthenticated(false)
+    setUser(null)
+    setAuthToken(null)
+    setMessages([])
+    setConversations([])
   }
 
   const handleSendMessage = async (text) => {
     if (!text.trim()) return
-
-    // Add user message
     const userMessage = {
       id: messages.length + 1,
       text: text,
       sender: 'user',
       timestamp: new Date().toISOString()
     }
-
     const updatedMessages = [...messages, userMessage]
     setMessages(updatedMessages)
     setIsLoading(true)
 
-    // Create empty bot message that will be filled by streaming
-    const botMessageId = updatedMessages.length + 1
     const botMessage = {
-      id: botMessageId,
+      id: updatedMessages.length + 1,
       text: '',
       sender: 'bot',
       timestamp: new Date().toISOString()
@@ -118,18 +143,34 @@ function App() {
     try {
       const response = await fetch('http://localhost:5000/chat/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
           message: text,
           session_id: currentConversationId
         })
       })
-      
       if (!response.ok) {
-        throw new Error(`Backend error: ${response.status}`)
+        // 422 = invalid JWT token (e.g. old token with integer subject)
+        if (response.status === 422) {
+          localStorage.removeItem('auth_token')
+          localStorage.removeItem('user')
+          setIsAuthenticated(false)
+          setUser(null)
+          setAuthToken(null)
+          throw new Error('Session expired. Please log in again.')
+        }
+        // Try to extract server error message
+        let serverMsg = `Backend error: ${response.status}`
+        try {
+          const errData = await response.json()
+          if (errData.msg) serverMsg = errData.msg
+          if (errData.error) serverMsg = errData.error
+        } catch {}
+        throw new Error(serverMsg)
       }
-
-      // Handle SSE stream
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let botText = ''
@@ -137,30 +178,46 @@ function App() {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-
         const chunk = decoder.decode(value, { stream: true })
         const lines = chunk.split('\n')
-
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            const data = line.slice(6) // Remove 'data: ' prefix
-            
+            const data = line.slice(6)
             if (data === '[DONE]') {
-              // Stream completed
               setIsLoading(false)
               break
             }
-
             try {
               const parsed = JSON.parse(data)
-              
               if (parsed.error) {
-                botText = `Error: ${parsed.error}`
+                const errType = parsed.error_type || 'general'
+                if (errType === 'api_key') {
+                  botText = `🔑 API Key Error: ${parsed.error}`
+                } else {
+                  botText = `Error: ${parsed.error}`
+                }
+              } else if (parsed.title) {
+                setConversations(prev => {
+                  const updated = [...prev]
+                  const idx = updated.findIndex(c => c.id === currentConversationId)
+                  if (idx >= 0) {
+                    updated[idx] = { ...updated[idx], preview: parsed.title }
+                  } else {
+                    updated.unshift({
+                      id: currentConversationId,
+                      preview: parsed.title,
+                      createdAt: new Date().toISOString(),
+                      lastUpdated: new Date().toISOString(),
+                      messages: []
+                    })
+                  }
+                  localStorage.setItem(`chatbot_conversations_${user?.id}`, JSON.stringify(updated))
+                  return updated
+                })
+                continue
               } else if (parsed.token) {
                 botText += parsed.token
               }
-
-              // Update message in real-time
               setMessages(prevMessages => {
                 const newMessages = [...prevMessages]
                 newMessages[newMessages.length - 1] = {
@@ -170,16 +227,12 @@ function App() {
                 return newMessages
               })
             } catch (e) {
-              // Skip parsing errors for empty lines
-              if (data.trim()) {
-                console.error('Error parsing SSE data:', e)
-              }
+              if (data.trim()) console.error('Error parsing SSE data:', e)
             }
           }
         }
       }
 
-      // Save conversation when streaming is done
       setMessages(prevMessages => {
         saveConversation(prevMessages)
         return prevMessages
@@ -187,14 +240,18 @@ function App() {
 
     } catch (error) {
       console.error('Stream Error:', error)
+      // Fix 2: mark errors with isError flag
+      const isApiKeyErr = error.message?.toLowerCase().includes('api key') ||
+                          error.message?.toLowerCase().includes('api_key')
       const errorMessage = {
         id: messagesWithBotMessage.length,
-        text: `Error: ${error.message}. Make sure the backend is running at http://localhost:5000`,
+        text: isApiKeyErr
+          ? `🔑 ${error.message}`
+          : `${error.message}. Make sure the backend is running at http://localhost:5000`,
         sender: 'bot',
+        isError: true,
         timestamp: new Date().toISOString()
       }
-      
-      // Replace the empty bot message with error
       const finalMessages = [
         ...messagesWithBotMessage.slice(0, -1),
         errorMessage
@@ -206,9 +263,52 @@ function App() {
     }
   }
 
+  const handleFileUpload = async (file) => {
+    if (!file) return
+    const ext = file.name.split('.').pop().toLowerCase()
+    if (!['pdf', 'txt'].includes(ext)) {
+      alert('Only PDF and TXT files are allowed.')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('File is too large. Maximum size is 5MB.')
+      return
+    }
+    setIsUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('session_id', currentConversationId)
+      const response = await fetch('http://localhost:5000/upload', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${authToken}` },
+        body: formData
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Upload failed')
+      setUploadedFile(data.filename)
+      const fileMessage = {
+        id: messages.length + 1,
+        text: `📎 **File uploaded:** ${data.filename}\n\n_${data.message}_`,
+        sender: 'bot',
+        timestamp: new Date().toISOString(),
+        isFileNotification: true
+      }
+      const updatedMessages = [...messages, fileMessage]
+      setMessages(updatedMessages)
+      saveConversation(updatedMessages)
+    } catch (error) {
+      console.error('Upload error:', error)
+      alert(`Upload failed: ${error.message}`)
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
   const handleNewChat = () => {
     saveConversation(messages)
     startNewConversation()
+    setUploadedFile(null)
     setShowHistory(false)
   }
 
@@ -222,7 +322,7 @@ function App() {
   }
 
   const handleClearHistory = () => {
-    localStorage.removeItem('chatbot_conversations')
+    localStorage.removeItem(`chatbot_conversations_${user?.id}`)
     setConversations([])
     startNewConversation()
   }
@@ -230,8 +330,7 @@ function App() {
   const handleDeleteConversation = (conversationId) => {
     const updated = conversations.filter(c => c.id !== conversationId)
     setConversations(updated)
-    localStorage.setItem('chatbot_conversations', JSON.stringify(updated))
-    
+    localStorage.setItem(`chatbot_conversations_${user?.id}`, JSON.stringify(updated))
     if (conversationId === currentConversationId) {
       if (updated.length > 0) {
         handleLoadConversation(updated[0].id)
@@ -241,9 +340,32 @@ function App() {
     }
   }
 
+  // Get user initials for avatar
+  const userInitials = user?.username
+    ? user.username.slice(0, 2).toUpperCase()
+    : 'U'
+
+  if (!isAuthenticated) {
+    return <Login onLoginSuccess={handleLoginSuccess} />
+  }
+
+  // Nav button config
+  const navButtons = [
+    { label: '🗺 Roadmap', action: () => setShowRoadmap(true) },
+    { label: '📝 Quiz', action: () => setShowQuiz(true) },
+    { label: '➕ New', action: handleNewChat },
+  ]
+
   return (
-    <div className="h-screen bg-gradient-to-br from-primary-50 via-primary-100 to-primary-200 flex">
-      {/* History Sidebar */}
+    <div style={{ height: '100vh', display: 'flex', position: 'relative' }}>
+      {/* Animated background orbs */}
+      <div className="bg-orbs">
+        <div className="orb orb-1"></div>
+        <div className="orb orb-2"></div>
+        <div className="orb orb-3"></div>
+      </div>
+
+      {/* Sidebar */}
       <HistorySidebar
         isOpen={showHistory}
         conversations={conversations}
@@ -251,50 +373,143 @@ function App() {
         onSelectConversation={handleLoadConversation}
         onDeleteConversation={handleDeleteConversation}
         onClearHistory={handleClearHistory}
+        onClose={() => setShowHistory(false)}
       />
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <header className="bg-gradient-to-r from-primary-900 to-primary-800 text-white shadow-lg z-10">
-          <div className="w-full px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className="p-2 hover:bg-white/20 rounded-lg transition-colors lg:hidden"
-                title="Toggle history"
-              >
-                <span className="text-lg">☰</span>
-              </button>
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur">
-                  <span className="text-base sm:text-xl font-bold">C</span>
-                </div>
-                <div className="hidden sm:block">
-                  <h1 className="text-xl sm:text-2xl font-bold">ChatBot</h1>
-                  <p className="text-primary-100 text-xs">Assistant</p>
-                </div>
-              </div>
-            </div>
+      {/* Main area */}
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', zIndex: 1 }}>
+
+        {/* ═══ FIX 1: TOP NAVIGATION BAR ═══ */}
+        <header style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 24px',
+          background: 'rgba(13, 17, 32, 0.95)',
+          backdropFilter: 'blur(20px)',
+          borderBottom: '1px solid rgba(255,255,255,0.07)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 100
+        }}>
+          {/* Left — Brand */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button
-              onClick={handleNewChat}
-              className="flex items-center gap-2 px-2 sm:px-4 py-2 bg-primary-700 hover:bg-primary-600 rounded-lg transition-colors font-medium text-sm"
-              title="Start new conversation"
-            >
-              <span>+</span>
-              <span className="hidden sm:inline">New</span>
-            </button>
+              onClick={() => setShowHistory(!showHistory)}
+              style={{
+                background: 'none', border: 'none', color: '#9AA3BF',
+                fontSize: 18, cursor: 'pointer', padding: 4, display: 'flex',
+                alignItems: 'center'
+              }}
+              title="Toggle history"
+            >☰</button>
+            <div style={{
+              width: 34, height: 34,
+              background: 'linear-gradient(135deg, #52B7FF, #9B6FFF)',
+              borderRadius: 10,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 18,
+              boxShadow: '0 0 20px rgba(82,183,255,0.3)'
+            }}>🤖</div>
+            <span className="font-brand" style={{
+              fontWeight: 800, fontSize: 18, letterSpacing: -0.5, color: '#E4E8F5'
+            }}>
+              ARI<span style={{ color: '#52B7FF' }}>A</span>
+            </span>
           </div>
+
+          {/* Center — Nav buttons */}
+          <div style={{ display: 'flex', gap: 6 }}>
+            {navButtons.map((btn, i) => (
+              <button
+                key={i}
+                onClick={btn.action}
+                style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: '#9AA3BF',
+                  padding: '7px 14px',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontFamily: 'inherit'
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(82,183,255,0.1)'
+                  e.currentTarget.style.borderColor = 'rgba(82,183,255,0.3)'
+                  e.currentTarget.style.color = '#52B7FF'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.05)'
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+                  e.currentTarget.style.color = '#9AA3BF'
+                }}
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Right — Sign out */}
+          <button
+            onClick={handleLogout}
+            style={{
+              background: 'rgba(255,126,95,0.1)',
+              border: '1px solid rgba(255,126,95,0.2)',
+              color: '#FF7E5F',
+              padding: '7px 14px',
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              fontFamily: 'inherit'
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = 'rgba(255,126,95,0.2)'
+              e.currentTarget.style.borderColor = 'rgba(255,126,95,0.4)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = 'rgba(255,126,95,0.1)'
+              e.currentTarget.style.borderColor = 'rgba(255,126,95,0.2)'
+            }}
+          >
+            Sign Out
+          </button>
         </header>
 
         {/* Chat Area */}
-        <div className="flex-1 overflow-hidden flex flex-col">
-          <ChatContainer messages={messages} isLoading={isLoading} messagesEndRef={messagesEndRef} />
+        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <ChatContainer
+            messages={messages}
+            isLoading={isLoading}
+            messagesEndRef={messagesEndRef}
+            userInitials={userInitials}
+          />
         </div>
 
         {/* Input Area */}
-        <MessageInput onSendMessage={handleSendMessage} isLoading={isLoading} />
+        <MessageInput
+          onSendMessage={handleSendMessage}
+          isLoading={isLoading}
+          onFileUpload={handleFileUpload}
+          uploadedFile={uploadedFile}
+          isUploading={isUploading}
+        />
       </div>
+
+      {/* Modals */}
+      {showQuiz && (
+        <QuizPanel authToken={authToken} onClose={() => setShowQuiz(false)} />
+      )}
+      {showRoadmap && (
+        <RoadmapPanel authToken={authToken} onClose={() => setShowRoadmap(false)} />
+      )}
     </div>
   )
 }

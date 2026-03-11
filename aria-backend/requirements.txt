@@ -4,6 +4,11 @@ flask-cors
 python-dotenv
 requests
 
+# Authentication & Database
+Flask-JWT-Extended
+Flask-SQLAlchemy
+bcrypt
+
 # LangChain ecosystem
 langchain
 langchain-google-genai
@@ -21,3 +26,6 @@ langdetect
 google-generativeai
 tiktoken
 pydantic
+
+# File upload
+PyPDF2

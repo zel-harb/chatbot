@@ -4,7 +4,8 @@ export default function HistorySidebar({
   currentConversationId,
   onSelectConversation,
   onDeleteConversation,
-  onClearHistory
+  onClearHistory,
+  onClose
 }) {
   const formatDate = (dateString) => {
     try {
@@ -12,7 +13,6 @@ export default function HistorySidebar({
       const now = new Date()
       const diffTime = Math.abs(now - date)
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-
       if (diffDays === 0) return 'Today'
       if (diffDays === 1) return 'Yesterday'
       if (diffDays < 7) return `${diffDays} days ago`
@@ -25,77 +25,134 @@ export default function HistorySidebar({
 
   return (
     <>
-      {/* Overlay for mobile */}
+      {/* Overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black/30 lg:hidden z-20"
-          onClick={() => {}}
-        ></div>
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+            zIndex: 20, backdropFilter: 'blur(4px)'
+          }}
+          onClick={onClose}
+        />
       )}
 
-      {/* Sidebar */}
-      <aside
-        className={`fixed top-0 left-0 h-screen w-56 sm:w-64 bg-white border-r border-primary-200 flex flex-col transition-transform lg:translate-x-0 z-30 overflow-y-auto ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        {/* Sidebar Header */}
-        <div className="sticky top-0 p-3 sm:p-4 border-b border-primary-200 bg-gradient-to-r from-primary-50 to-primary-100">
-          <h2 className="text-base sm:text-lg font-bold text-primary-900">Chat History</h2>
-          <p className="text-xs text-gray-600 mt-1">
-            {conversations.length} conversation{conversations.length !== 1 ? 's' : ''}
-          </p>
+      {/* Sidebar panel */}
+      <aside style={{
+        position: 'fixed', top: 0, left: 0, height: '100vh',
+        width: 260,
+        background: '#111828',
+        borderRight: '1px solid rgba(255,255,255,0.07)',
+        display: 'flex', flexDirection: 'column',
+        zIndex: 30,
+        transform: isOpen ? 'translateX(0)' : 'translateX(-100%)',
+        transition: 'transform 0.25s ease'
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '16px 20px',
+          borderBottom: '1px solid rgba(255,255,255,0.07)'
+        }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: 1.5, color: '#5A6280', marginBottom: 4
+          }}>
+            CONVERSATIONS
+          </div>
+          <span style={{ fontSize: 12, color: '#4A5270' }}>
+            {conversations.length} chat{conversations.length !== 1 ? 's' : ''}
+          </span>
         </div>
 
-        {/* Conversations List */}
-        <div className="flex-1 overflow-y-auto">
+        {/* List */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px' }}>
           {conversations.length === 0 ? (
-            <div className="p-4 text-center text-gray-500">
-              <p className="text-sm">No conversations yet</p>
-              <p className="text-xs mt-2">Start chatting to build history</p>
+            <div style={{ padding: 20, textAlign: 'center', color: '#4A5270', fontSize: 13 }}>
+              <p>No conversations yet</p>
+              <p style={{ fontSize: 11, marginTop: 6 }}>Start chatting to build history</p>
             </div>
           ) : (
-            <div className="space-y-2 p-3">
-              {conversations.map((conversation) => (
-                <div
-                  key={conversation.id}
-                  className={`group relative p-3 rounded-lg cursor-pointer transition-all ${
-                    conversation.id === currentConversationId
-                      ? 'bg-primary-100 border-l-4 border-primary-600'
-                      : 'hover:bg-primary-50'
-                  }`}
-                  onClick={() => onSelectConversation(conversation.id)}
-                >
-                  <p className="text-sm font-medium text-primary-900 truncate line-clamp-2">
-                    {conversation.preview || 'New conversation'}
-                  </p>
-                  <p className="text-xs text-primary-600 mt-1">
-                    {formatDate(conversation.lastUpdated || conversation.createdAt)}
-                  </p>
-
-                  {/* Delete button on hover */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDeleteConversation(conversation.id)
-                    }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-primary-200 rounded text-primary-800 text-sm"
-                    title="Delete conversation"
-                  >
-                    ×
-                  </button>
+            conversations.map((c) => (
+              <div
+                key={c.id}
+                onClick={() => onSelectConversation(c.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  marginBottom: 2,
+                  background: c.id === currentConversationId
+                    ? 'rgba(82,183,255,0.1)'
+                    : 'transparent',
+                  borderLeft: c.id === currentConversationId
+                    ? '3px solid #52B7FF'
+                    : '3px solid transparent',
+                  transition: 'all 0.15s',
+                  position: 'relative'
+                }}
+                onMouseEnter={e => {
+                  if (c.id !== currentConversationId)
+                    e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+                  e.currentTarget.querySelector('.del-btn').style.opacity = 1
+                }}
+                onMouseLeave={e => {
+                  if (c.id !== currentConversationId)
+                    e.currentTarget.style.background = 'transparent'
+                  e.currentTarget.querySelector('.del-btn').style.opacity = 0
+                }}
+              >
+                <span style={{ fontSize: 14, flexShrink: 0 }}>💬</span>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{
+                    fontSize: 13, fontWeight: 500, color: '#C8CEE0',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                  }}>
+                    {c.preview || 'New conversation'}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#4A5270', marginTop: 2 }}>
+                    {formatDate(c.lastUpdated || c.createdAt)}
+                  </div>
                 </div>
-              ))}
-            </div>
+
+                {/* Delete */}
+                <button
+                  className="del-btn"
+                  onClick={(e) => { e.stopPropagation(); onDeleteConversation(c.id) }}
+                  style={{
+                    background: 'none', border: 'none',
+                    color: '#FF7E5F', fontSize: 14, cursor: 'pointer',
+                    opacity: 0, transition: 'opacity 0.15s',
+                    padding: 2
+                  }}
+                  title="Delete"
+                >×</button>
+              </div>
+            ))
           )}
         </div>
 
-        {/* Sidebar Footer */}
+        {/* Footer */}
         {conversations.length > 0 && (
-          <div className="p-4 border-t border-primary-200 space-y-2">
+          <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
             <button
               onClick={onClearHistory}
-              className="w-full px-3 py-2 text-sm font-medium text-primary-700 hover:bg-primary-100 rounded-lg transition-colors"
+              style={{
+                width: '100%', padding: '8px 0',
+                background: 'rgba(255,126,95,0.08)',
+                border: '1px solid rgba(255,126,95,0.15)',
+                borderRadius: 8,
+                color: '#FF7E5F',
+                fontSize: 12, fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                fontFamily: 'inherit'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(255,126,95,0.15)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(255,126,95,0.08)'
+              }}
             >
               Clear All History
             </button>

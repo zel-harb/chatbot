@@ -1,23 +1,41 @@
 import { useState } from 'react'
 
+const IconX = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+  </svg>
+)
+const IconCheck = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="20 6 9 17 4 12"/>
+  </svg>
+)
+const IconArrowRight = () => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+  </svg>
+)
+
 export default function QuizPanel({ authToken, onClose }) {
+  const [phase, setPhase] = useState('setup') // setup | quiz | results
   const [topic, setTopic] = useState('')
   const [numQuestions, setNumQuestions] = useState(5)
-  const [questions, setQuestions] = useState(null)
+  const [difficulty, setDifficulty] = useState('medium')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [questions, setQuestions] = useState([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [selectedAnswer, setSelectedAnswer] = useState(null)
   const [showExplanation, setShowExplanation] = useState(false)
   const [score, setScore] = useState(0)
-  const [answered, setAnswered] = useState(false)
-  const [finished, setFinished] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [answers, setAnswers] = useState([])
 
-  const handleStart = async () => {
-    if (!topic.trim()) return
-    setLoading(true)
+  const letters = ['A', 'B', 'C', 'D', 'E', 'F']
+
+  const generateQuiz = async () => {
+    if (!topic.trim()) { setError('Please enter a topic.'); return }
     setError('')
-
+    setLoading(true)
     try {
       const res = await fetch('http://localhost:5000/quiz', {
         method: 'POST',
@@ -25,19 +43,22 @@ export default function QuizPanel({ authToken, onClose }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify({ topic: topic.trim(), num_questions: numQuestions })
+        body: JSON.stringify({
+          topic: topic.trim(),
+          num_questions: numQuestions,
+          difficulty
+        })
       })
-
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to generate quiz')
-
+      if (!data.questions?.length) throw new Error('No questions returned')
       setQuestions(data.questions)
+      setPhase('quiz')
       setCurrentIndex(0)
       setScore(0)
-      setFinished(false)
+      setAnswers([])
       setSelectedAnswer(null)
       setShowExplanation(false)
-      setAnswered(false)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -45,206 +66,167 @@ export default function QuizPanel({ authToken, onClose }) {
     }
   }
 
-  const handleSelect = (letter) => {
-    if (answered) return
-    setSelectedAnswer(letter)
-    setAnswered(true)
+  const handleAnswer = (choiceIdx) => {
+    if (selectedAnswer !== null) return
+    const q = questions[currentIndex]
+    const isCorrect = choiceIdx === q.correct_answer
+    setSelectedAnswer(choiceIdx)
     setShowExplanation(true)
-    if (letter === questions[currentIndex].correct) {
-      setScore(s => s + 1)
-    }
+    if (isCorrect) setScore(prev => prev + 1)
+    setAnswers(prev => [...prev, { question: currentIndex, selected: choiceIdx, correct: isCorrect }])
   }
 
-  const handleNext = () => {
+  const nextQuestion = () => {
     if (currentIndex + 1 >= questions.length) {
-      setFinished(true)
+      setPhase('results')
     } else {
-      setCurrentIndex(i => i + 1)
+      setCurrentIndex(prev => prev + 1)
       setSelectedAnswer(null)
       setShowExplanation(false)
-      setAnswered(false)
     }
   }
 
-  const handleRestart = () => {
-    setQuestions(null)
+  const restart = () => {
+    setPhase('setup')
     setTopic('')
-    setFinished(false)
+    setQuestions([])
     setScore(0)
-    setCurrentIndex(0)
+    setAnswers([])
+    setError('')
   }
 
-  const q = questions?.[currentIndex]
+  const q = questions[currentIndex]
+  const progress = questions.length > 0 ? ((currentIndex + (selectedAnswer !== null ? 1 : 0)) / questions.length) * 100 : 0
 
-  /* ── Score screen ── */
-  if (finished) {
-    const pct = Math.round((score / questions.length) * 100)
-    return (
-      <div className="quiz-overlay">
-        <div className="quiz-modal" style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>
-            {pct >= 70 ? '🎉' : pct >= 40 ? '👍' : '📚'}
-          </div>
-          <h2 className="font-brand" style={{ fontSize: 20, fontWeight: 800, color: '#E4E8F5', marginBottom: 4 }}>
-            Quiz Complete!
-          </h2>
-          <p style={{ fontSize: 13, color: '#7A82A0', marginBottom: 16 }}>
-            Topic: <span style={{ fontWeight: 600, color: '#9AA3BF' }}>{topic}</span>
-          </p>
-          <div className="quiz-final-score">{pct}%</div>
-          <p className="quiz-final-label">
-            You got <span style={{ fontWeight: 700, color: '#52B7FF' }}>{score}</span> out of <span style={{ fontWeight: 700, color: '#E4E8F5' }}>{questions.length}</span> correct
-          </p>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-            <button className="quiz-next-btn" onClick={handleRestart}>New Quiz</button>
-            <button className="quiz-quit-btn" onClick={onClose}>Close</button>
-          </div>
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <span className="modal-title">
+            {phase === 'setup' ? 'Generate Quiz' : phase === 'quiz' ? 'Quiz' : 'Results'}
+          </span>
+          {phase === 'quiz' && (
+            <div style={{ display: 'flex', gap: 6, marginLeft: 'auto', marginRight: 12 }}>
+              <span className="pill counter">{currentIndex + 1}/{questions.length}</span>
+              <span className="pill score">{score} correct</span>
+            </div>
+          )}
+          <button className="modal-close" onClick={onClose}><IconX /></button>
         </div>
-      </div>
-    )
-  }
 
-  /* ── Question screen ── */
-  if (questions && q) {
-    const isCorrectAnswer = selectedAnswer === q.correct
-    return (
-      <div className="quiz-overlay">
-        <div className="quiz-modal">
-          {/* Top badges */}
-          <div className="quiz-top">
-            <span className="quiz-counter">
-              Question {currentIndex + 1} / {questions.length}
-            </span>
-            <span className="quiz-score">Score: {score}</span>
-          </div>
-
-          {/* Progress bar */}
-          <div className="quiz-progress-track">
-            <div
-              className="quiz-progress-fill"
-              style={{ width: `${((currentIndex + (answered ? 1 : 0)) / questions.length) * 100}%` }}
-            />
-          </div>
-
-          {/* Question */}
-          <h3 className="quiz-question">{q.question}</h3>
-
-          {/* Options */}
+        {/* ── Setup ── */}
+        {phase === 'setup' && (
           <div>
-            {q.options.map((opt, i) => {
-              const letter = ['A', 'B', 'C', 'D'][i]
-              const isCorrect = letter === q.correct
-              const isSelected = letter === selectedAnswer
+            {error && <div className="alert-error">{error}</div>}
+            <div style={{ marginBottom: 14 }}>
+              <label className="field-label">Topic</label>
+              <input
+                className="field-input"
+                value={topic}
+                onChange={e => setTopic(e.target.value)}
+                placeholder="e.g. Machine Learning, React Hooks"
+                autoFocus
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
+              <div style={{ flex: 1 }}>
+                <label className="field-label">Questions</label>
+                <select
+                  className="field-input"
+                  value={numQuestions}
+                  onChange={e => setNumQuestions(Number(e.target.value))}
+                >
+                  {[3, 5, 10, 15].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="field-label">Difficulty</label>
+                <select
+                  className="field-input"
+                  value={difficulty}
+                  onChange={e => setDifficulty(e.target.value)}
+                >
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </div>
+            </div>
+            <button className="btn-primary full" onClick={generateQuiz} disabled={loading}>
+              {loading ? <span className="spinner" /> : null}
+              {loading ? 'Generating...' : 'Generate Quiz'}
+            </button>
+          </div>
+        )}
 
-              let cls = 'quiz-option'
-              if (answered) {
-                if (isCorrect) cls += ' correct'
-                else if (isSelected && !isCorrect) cls += ' wrong'
+        {/* ── Quiz ── */}
+        {phase === 'quiz' && q && (
+          <div>
+            <div className="quiz-progress">
+              <div className="quiz-progress-bar" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="quiz-q">{q.question}</div>
+            {q.choices?.map((choice, i) => {
+              let cls = 'quiz-choice'
+              if (selectedAnswer !== null) {
+                if (i === q.correct_answer) cls += ' correct'
+                else if (i === selectedAnswer) cls += ' wrong'
                 else cls += ' dimmed'
               }
-
               return (
                 <button
-                  key={letter}
-                  onClick={() => handleSelect(letter)}
-                  disabled={answered}
+                  key={i}
                   className={cls}
+                  onClick={() => handleAnswer(i)}
+                  disabled={selectedAnswer !== null}
                 >
-                  <span style={{ fontWeight: 700, marginRight: 8 }}>{letter})</span>
-                  {opt.replace(/^[A-D]\)\s*/, '')}
-                  {answered && isCorrect && <span style={{ float: 'right' }}>✓</span>}
-                  {answered && isSelected && !isCorrect && <span style={{ float: 'right' }}>✗</span>}
+                  <span className="choice-letter">{letters[i]}</span>
+                  <span>{choice}</span>
                 </button>
               )
             })}
-          </div>
-
-          {/* Explanation */}
-          {showExplanation && (
-            <div className={`quiz-explanation ${isCorrectAnswer ? 'correct-exp' : 'wrong-exp'}`}>
-              <p style={{ fontWeight: 600, marginBottom: 4 }}>
-                {isCorrectAnswer ? '✓ Correct!' : `✗ Incorrect — answer is ${q.correct}`}
-              </p>
-              <p>{q.explanation}</p>
-            </div>
-          )}
-
-          {/* Bottom row */}
-          <div className="quiz-bottom">
-            <button className="quiz-quit-btn" onClick={onClose}>Quit</button>
-            {answered && (
-              <button className="quiz-next-btn" onClick={handleNext}>
-                {currentIndex + 1 >= questions.length ? 'See Results' : 'Next →'}
-              </button>
+            {showExplanation && q.explanation && (
+              <div className={`explanation-box ${selectedAnswer === q.correct_answer ? 'correct' : 'wrong'}`}>
+                {selectedAnswer === q.correct_answer ? (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontWeight: 700 }}>
+                    <IconCheck /> Correct
+                  </span>
+                ) : (
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, fontWeight: 700 }}>
+                    <IconX /> Incorrect
+                  </span>
+                )}
+                {q.explanation}
+              </div>
+            )}
+            {selectedAnswer !== null && (
+              <div className="modal-footer">
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  {currentIndex + 1} of {questions.length}
+                </span>
+                <button className="btn-primary" onClick={nextQuestion}>
+                  {currentIndex + 1 >= questions.length ? 'See Results' : 'Next'} <IconArrowRight />
+                </button>
+              </div>
             )}
           </div>
-        </div>
-      </div>
-    )
-  }
+        )}
 
-  /* ── Setup screen ── */
-  return (
-    <div className="quiz-overlay">
-      <div className="quiz-modal">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-          <h2 className="font-brand" style={{ fontSize: 20, fontWeight: 800, color: '#E4E8F5' }}>
-            📝 Quiz Mode
-          </h2>
-          <button
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', color: '#525C78', fontSize: 22, cursor: 'pointer', lineHeight: 1 }}
-          >
-            &times;
-          </button>
-        </div>
-
-        <label className="quiz-label">Topic</label>
-        <input
-          type="text"
-          value={topic}
-          onChange={e => setTopic(e.target.value)}
-          placeholder="e.g. Python basics, React hooks, Machine Learning..."
-          className="quiz-input"
-          style={{ marginBottom: 14 }}
-          onKeyDown={e => e.key === 'Enter' && handleStart()}
-        />
-
-        <label className="quiz-label">Number of questions</label>
-        <select
-          value={numQuestions}
-          onChange={e => setNumQuestions(Number(e.target.value))}
-          className="quiz-input"
-          style={{ marginBottom: 18 }}
-        >
-          {[3, 5, 10, 15, 20].map(n => (
-            <option key={n} value={n}>{n} questions</option>
-          ))}
-        </select>
-
-        {error && <div className="quiz-error">{error}</div>}
-
-        <button
-          onClick={handleStart}
-          disabled={loading || !topic.trim()}
-          className="quiz-start-btn"
-        >
-          {loading ? (
-            <>
-              <span style={{
-                width: 16, height: 16,
-                border: '2px solid #fff',
-                borderTopColor: 'transparent',
-                borderRadius: '50%',
-                display: 'inline-block',
-                animation: 'spin 0.6s linear infinite'
-              }} />
-              Generating Quiz...
-            </>
-          ) : (
-            'Start Quiz'
-          )}
-        </button>
+        {/* ── Results ── */}
+        {phase === 'results' && (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div className="score-display">{score}/{questions.length}</div>
+            <div className="score-subtext">
+              {score === questions.length ? 'Perfect score!' :
+               score >= questions.length * 0.7 ? 'Great job!' :
+               score >= questions.length * 0.5 ? 'Not bad!' : 'Keep practicing!'}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 24 }}>
+              <button className="btn-ghost" onClick={restart}>New Quiz</button>
+              <button className="btn-primary" onClick={onClose}>Done</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

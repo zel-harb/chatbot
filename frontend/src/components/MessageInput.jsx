@@ -1,244 +1,144 @@
 import { useState, useRef, useEffect } from 'react'
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+/* ── SVG Icons ── */
+const IconPaperclip = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+  </svg>
+)
+const IconMic = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
+  </svg>
+)
+const IconSend = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+  </svg>
+)
+const IconFile = () => (
+  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+  </svg>
+)
 
 export default function MessageInput({ onSendMessage, isLoading, onFileUpload, uploadedFile, isUploading }) {
-  const [message, setMessage] = useState('')
-  const [isListening, setIsListening] = useState(false)
+  const [text, setText] = useState('')
+  const [focused, setFocused] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
   const recognitionRef = useRef(null)
 
   useEffect(() => {
-    if (!SpeechRecognition) return
-
-    const recognition = new SpeechRecognition()
-    recognition.continuous = false
-    recognition.interimResults = true
-    recognition.lang = 'en-US'
-
-    recognition.onresult = (event) => {
-      let transcript = ''
-      for (let i = 0; i < event.results.length; i++) {
-        transcript += event.results[i][0].transcript
-      }
-      setMessage(() => {
-        const base = recognitionRef.current?._baseText || ''
-        return base ? base + ' ' + transcript : transcript
-      })
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 140) + 'px'
     }
+  }, [text])
 
-    recognition.onend = () => setIsListening(false)
-    recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error)
-      setIsListening(false)
-    }
-
-    recognitionRef.current = recognition
-    return () => recognition.abort()
-  }, [])
-
-  const toggleListening = () => {
-    if (!SpeechRecognition) {
-      alert('Speech recognition is not supported in your browser. Try Chrome or Edge.')
-      return
-    }
-    if (isListening) {
-      recognitionRef.current?.stop()
-      setIsListening(false)
-    } else {
-      recognitionRef.current._baseText = message
-      recognitionRef.current?.start()
-      setIsListening(true)
-    }
-  }
-
-  const handleSubmit = (e) => {
-    e.preventDefault()
-    if (message.trim() && !isLoading) {
-      onSendMessage(message)
-      setMessage('')
-      if (textareaRef.current) textareaRef.current.style.height = 'auto'
-    }
+  const handleSubmit = () => {
+    if (!text.trim() || isLoading) return
+    onSendMessage(text.trim())
+    setText('')
+    if (textareaRef.current) textareaRef.current.style.height = 'auto'
   }
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      handleSubmit(e)
-    }
-  }
-
-  const handleInput = (e) => {
-    setMessage(e.target.value)
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px'
+      handleSubmit()
     }
   }
 
   const handleFileClick = () => fileInputRef.current?.click()
-
   const handleFileChange = (e) => {
-    const file = e.target.files[0]
+    const file = e.target.files?.[0]
     if (file) onFileUpload(file)
     e.target.value = ''
   }
 
-  // ── Shared icon-button style ──
-  const iconBtn = {
-    background: 'none',
-    border: 'none',
-    color: '#7A839E',
-    cursor: 'pointer',
-    padding: 6,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-    transition: 'color 0.2s'
+  const toggleVoice = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) return alert('Speech recognition not supported in this browser.')
+
+    if (isRecording && recognitionRef.current) {
+      recognitionRef.current.stop()
+      setIsRecording(false)
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.lang = 'en-US'
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript
+      setText(prev => prev + transcript)
+      setIsRecording(false)
+    }
+    recognition.onerror = () => setIsRecording(false)
+    recognition.onend = () => setIsRecording(false)
+    recognitionRef.current = recognition
+    recognition.start()
+    setIsRecording(true)
   }
 
   return (
-    <div style={{
-      padding: '12px 24px 16px',
-      background: 'transparent',
-      position: 'relative',
-      zIndex: 10
-    }}>
-      {/* Uploaded file pill */}
-      {uploadedFile && (
-        <div style={{ maxWidth: 720, margin: '0 auto 8px', paddingLeft: 4 }}>
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '4px 12px', borderRadius: 8,
-            background: 'rgba(82,183,255,0.1)', border: '1px solid rgba(82,183,255,0.2)',
-            color: '#52B7FF', fontSize: 12
-          }}>
-            📎 <span style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{uploadedFile}</span> ✓
-          </span>
+    <div className="input-area">
+      <div className="input-wrapper">
+        <div className={`input-container${focused ? ' focused' : ''}`}>
+          <div className="input-row">
+            <textarea
+              ref={textareaRef}
+              className="input-field"
+              value={text}
+              onChange={e => setText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              placeholder="Ask ARIA anything..."
+              rows={1}
+              disabled={isLoading}
+            />
+            <button
+              className="input-action-btn"
+              onClick={handleFileClick}
+              title="Attach file"
+              disabled={isUploading}
+            >
+              <IconPaperclip />
+            </button>
+            <button
+              className={`input-action-btn${isRecording ? ' recording' : ''}`}
+              onClick={toggleVoice}
+              title={isRecording ? 'Stop recording' : 'Voice input'}
+            >
+              <IconMic />
+            </button>
+            <button
+              className="input-send-btn"
+              onClick={handleSubmit}
+              disabled={!text.trim() || isLoading}
+            >
+              {isLoading ? <span className="spinner" /> : <IconSend />}
+            </button>
+          </div>
+          {(uploadedFile || isUploading) && (
+            <div className="input-footer">
+              {isUploading ? (
+                <span className="input-tag"><span className="spinner" /> Uploading...</span>
+              ) : uploadedFile ? (
+                <span className="input-tag active"><IconFile /> {uploadedFile}</span>
+              ) : null}
+            </div>
+          )}
         </div>
-      )}
-
-      <form onSubmit={handleSubmit} style={{ maxWidth: 720, margin: '0 auto' }}>
-        <div style={{
-          display: 'flex',
-          alignItems: 'flex-end',
-          gap: 8,
-          background: '#182030',
-          border: '1px solid rgba(255,255,255,0.08)',
-          borderRadius: 16,
-          padding: '8px 12px',
-          transition: 'border-color 0.25s, box-shadow 0.25s'
-        }}
-        onFocus={(e) => {
-          e.currentTarget.style.borderColor = 'rgba(82,183,255,0.35)'
-          e.currentTarget.style.boxShadow = '0 0 20px rgba(82,183,255,0.08)'
-        }}
-        onBlur={(e) => {
-          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'
-          e.currentTarget.style.boxShadow = 'none'
-        }}
-        >
-          {/* File attach */}
-          <input ref={fileInputRef} type="file" accept=".pdf,.txt" onChange={handleFileChange} style={{ display: 'none' }} />
-          <button
-            type="button"
-            onClick={handleFileClick}
-            disabled={isLoading || isUploading}
-            style={{ ...iconBtn, opacity: isLoading || isUploading ? 0.4 : 1 }}
-            title="Upload PDF or TXT (max 5MB)"
-          >
-            {isUploading ? (
-              <span style={{ width: 18, height: 18, border: '2px solid #52B7FF', borderTopColor: 'transparent', borderRadius: '50%', display: 'inline-block', animation: 'spin .6s linear infinite' }} />
-            ) : (
-              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-              </svg>
-            )}
-          </button>
-
-          {/* Textarea */}
-          <textarea
-            ref={textareaRef}
-            value={message}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder="Message ARIA…"
-            rows="1"
-            disabled={isLoading}
-            style={{
-              flex: 1,
-              background: 'transparent',
-              border: 'none',
-              outline: 'none',
-              resize: 'none',
-              color: '#E4E8F5',
-              fontSize: 14,
-              lineHeight: '22px',
-              padding: '6px 4px',
-              minHeight: 36,
-              maxHeight: 120,
-              fontFamily: 'inherit'
-            }}
-          />
-
-          {/* Voice button */}
-          <button
-            type="button"
-            onClick={toggleListening}
-            disabled={isLoading}
-            style={{
-              ...iconBtn,
-              color: isListening ? '#FF5C5C' : '#7A839E',
-              animation: isListening ? 'pulse 1.2s infinite' : 'none',
-              opacity: isLoading ? 0.4 : 1
-            }}
-            title={isListening ? 'Stop recording' : 'Voice input'}
-          >
-            {isListening ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
-            ) : (
-              <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-              </svg>
-            )}
-          </button>
-
-          {/* Send button */}
-          <button
-            type="submit"
-            disabled={!message.trim() || isLoading}
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              border: 'none',
-              cursor: !message.trim() || isLoading ? 'not-allowed' : 'pointer',
-              background: !message.trim() || isLoading
-                ? 'rgba(255,255,255,0.06)'
-                : 'linear-gradient(135deg, #52B7FF, #9B6FFF)',
-              color: !message.trim() || isLoading ? '#4A5270' : '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'all 0.25s',
-              flexShrink: 0,
-              boxShadow: message.trim() && !isLoading
-                ? '0 0 16px rgba(82,183,255,0.3)'
-                : 'none'
-            }}
-          >
-            {isLoading ? (
-              <span style={{ width: 16, height: 16, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', display: 'inline-block', animation: 'spin .6s linear infinite' }} />
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-              </svg>
-            )}
-          </button>
+        <input ref={fileInputRef} type="file" accept=".pdf,.txt" hidden onChange={handleFileChange} />
+        <div className="input-footer" style={{ paddingLeft: 0, paddingRight: 0, paddingTop: 6 }}>
+          <span className="input-shortcut">Shift + Enter for new line</span>
         </div>
-      </form>
+      </div>
     </div>
   )
 }
